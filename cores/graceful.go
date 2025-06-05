@@ -13,14 +13,16 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"github.com/pkg/errors"
 	"github.com/miebyte/goutils/logging"
+	"github.com/pkg/errors"
 )
 
 func (c *CoresService) gracefulKill() mountFn {
 	return mountFn{
-		name: "GracefulKill",
+		name:    "GracefulKill",
+		maxWait: time.Second * 3,
 		fn: func(ctx context.Context) error {
 			ch := make(chan os.Signal, 1)
 			signal.Notify(
@@ -40,11 +42,6 @@ func (c *CoresService) gracefulKill() mountFn {
 				if c.listener != nil {
 					_ = c.listener.Close()
 					logging.Infoc(ctx, "Graceful stopped listener")
-				}
-
-				if c.tp != nil {
-					c.tp.Shutdown(ctx)
-					logging.Infoc(ctx, "Graceful stopped tracing")
 				}
 
 				logging.Infoc(ctx, "Graceful stopped service successfully")

@@ -7,7 +7,6 @@
 以下是 `go-utils` 包含的主要模块及其功能简介：
 
 * [`cores`](#cores):  脚手架核心功能。
-* [`dialer`](#dialer): 网络连接相关工具 (例如：TCP/UDP dialer)。
 * [`example`](#example): 示例代码或用法演示。
 * [`internal`](#internal): 项目内部使用的包，通常不建议外部直接引用。
 * [`localrepos`](localrepos/README.md): 本地仓库或存储相关的工具。

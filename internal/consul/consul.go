@@ -52,10 +52,12 @@ func init() {
 		return
 	}
 
-	addrs, err := net.LookupHost("host.docker.internal")
-	if err == nil && len(addrs) > 0 && IsInsideDockerContainer() {
-		setShareConsulAddr(addrs[0])
-		return
+	if IsInsideDockerContainer() {
+		addrs, err := net.LookupHost("host.docker.internal")
+		if err == nil && len(addrs) > 0 {
+			setShareConsulAddr(addrs[0])
+			return
+		}
 	}
 
 	setShareConsulAddr("127.0.0.1")

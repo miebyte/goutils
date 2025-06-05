@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/miebyte/goutils/internal/share"
@@ -37,7 +38,8 @@ type CoresService struct {
 	ctx    context.Context
 	cancel func()
 
-	serviceAlias string
+	serviceName string
+	tags        []string
 
 	listenAddr  string
 	listener    net.Listener
@@ -58,12 +60,6 @@ type CoresService struct {
 }
 
 type ServiceOption func(*CoresService)
-
-func WithServiceAlias(name string) ServiceOption {
-	return func(cs *CoresService) {
-		cs.serviceAlias = name
-	}
-}
 
 func WithDefaultMaxWait(wait time.Duration) ServiceOption {
 	return func(_ *CoresService) {
@@ -96,20 +92,28 @@ func NewCores(opts ...ServiceOption) *CoresService {
 }
 
 func (c *CoresService) serve() error {
+	if share.ServiceName() != "" {
+		segs := strings.SplitN(share.ServiceName(), ":", 2)
+		if len(segs) < 2 {
+			c.serviceName = share.ServiceName()
+		} else {
+			c.serviceName = segs[0]
+			c.tags = append(c.tags, segs[1])
+		}
+		c.ctx = logging.With(c.ctx, "Service", share.ServiceName())
+	}
+
+	if len(c.tags) == 0 {
+		c.tags = append(c.tags, "dev")
+	}
+
 	c.mountFns = []mountFn{
 		c.gracefulKill(),
+		c.registerService(),
 	}
 
 	if c.listener != nil {
 		c.mountFns = append(c.mountFns, c.listenHttp())
-	}
-
-	if c.serviceAlias != "" {
-		c.ctx = logging.With(c.ctx, "Alias", c.serviceAlias)
-	}
-
-	if share.ServiceName() != "" {
-		c.ctx = logging.With(c.ctx, "Service", share.ServiceName())
 	}
 
 	c.wrapWorker()

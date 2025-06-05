@@ -14,7 +14,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/miebyte/goutils/discover"
 	"github.com/miebyte/goutils/flags/reader"
+	"github.com/miebyte/goutils/internal/consul"
 	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
 	"github.com/miebyte/goutils/logging/level"
@@ -22,6 +24,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
+	consulReader "github.com/miebyte/goutils/flags/reader/consul"
 	localReader "github.com/miebyte/goutils/flags/reader/local"
 )
 
@@ -47,6 +50,12 @@ type Option struct {
 
 type OptionFunc func(*Option)
 
+func UseRemote() OptionFunc {
+	return func(o *Option) {
+		o.UseRemote = true
+	}
+}
+
 func Viper() *viper.Viper {
 	return v
 }
@@ -70,8 +79,8 @@ func Parse(opts ...OptionFunc) {
 
 	if opt.UseRemote && config() == "" {
 		checkServiceName()
-		// TODO: set consul reader
-
+		defaultConfigReader = consulReader.NewConsulConfigReader()
+		discover.SetFinder(consul.GetConsulClient())
 	}
 
 	readConfig(opt)
@@ -116,6 +125,7 @@ func initViper(_ *Option) {
 func readConfig(_ *Option) {
 	readOpt := &reader.Option{
 		ServiceName: share.ServiceName(),
+		Tag:         "dev",
 		ConfigPath:  config(),
 	}
 

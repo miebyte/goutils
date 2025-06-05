@@ -26,8 +26,8 @@ func (c *CoresService) welcome() {
 		logging.Infof("HttpHandler enabled. URL=%s\n", fmt.Sprintf("http://%s%s", target, c.httpPattern))
 	}
 
-	if c.serviceAlias != "" {
-		logging.Infof("Service: %s Started.\n", c.serviceAlias)
+	if c.serviceName != "" {
+		logging.Infof("Service: %s Tags: %v Started.\n", c.serviceName, c.tags)
 	} else {
 		logging.Infof("Service Started.")
 	}

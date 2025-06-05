@@ -18,6 +18,7 @@ import (
 	"github.com/miebyte/goutils/logging"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
+	_ "github.com/spf13/viper/remote"
 )
 
 type consulConfigReader struct {

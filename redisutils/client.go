@@ -1,0 +1,285 @@
+// File:		client.go
+// Created by:	Hoven
+// Created on:	2024-12-02
+//
+// This file is part of the Example Project.
+//
+// (c) 2024 Example Corp. All rights reserved.
+
+package redisutils
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"reflect"
+	"sync"
+	"time"
+
+	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
+)
+
+// Define error types
+var (
+	// ErrLockAcquireFailed indicates failure to acquire the lock
+	ErrLockAcquireFailed = errors.New("failed to acquire lock")
+	// ErrLockNotFound indicates the lock does not exist
+	ErrLockNotFound = errors.New("lock not found")
+	// ErrLockReleaseFailed indicates failure to release the lock
+	ErrLockReleaseFailed = errors.New("failed to release lock")
+	// ErrLockTimeout indicates lock acquisition timeout
+	ErrLockTimeout = errors.New("lock timeout")
+)
+
+// Lua script for atomic unlock operation
+const unlockScript = `
+	if redis.call('get', KEYS[1]) == ARGV[1] then
+		return redis.call('del', KEYS[1])
+	end
+	return 0`
+
+type RedisClient struct {
+	*redis.Client
+	locks sync.Map // stores lock values for validation
+}
+
+func NewRedisClient(conf *RedisConfig) (*RedisClient, error) {
+	client := redis.NewClient(&redis.Options{
+		Addr:         conf.Address(),
+		Password:     conf.Password,
+		DB:           conf.Db,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		MaxRetries:   3,
+		PoolSize:     conf.PoolSize,
+		MinIdleConns: conf.MinSize,
+		MaxIdleConns: conf.MaxSize,
+	})
+
+	if _, err := client.Ping(context.Background()).Result(); err != nil {
+		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+	}
+
+	return &RedisClient{Client: client}, nil
+}
+
+// TryLock attempts to acquire a distributed lock
+func (c *RedisClient) TryLock(ctx context.Context, key string, expiration time.Duration) error {
+	value := fmt.Sprintf("%s:%d", c.getInstanceID(), time.Now().UnixNano())
+
+	success, err := c.SetNX(ctx, key, value, expiration).Result()
+	if err != nil {
+		return err
+	}
+
+	if !success {
+		return errors.Wrapf(ErrLockAcquireFailed, "key(%s)", key)
+	}
+
+	c.locks.Store(key, value)
+	return nil
+}
+
+// TryLockWithTimeout attempts to acquire a lock with a timeout
+func (c *RedisClient) TryLockWithTimeout(ctx context.Context, key string, expiration, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := c.TryLock(ctx, key, expiration)
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w: %s", ErrLockTimeout, key)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// Unlock releases a distributed lock
+func (c *RedisClient) Unlock(ctx context.Context, key string) error {
+	valueI, exists := c.locks.Load(key)
+	if !exists {
+		return fmt.Errorf("%w: %s", ErrLockNotFound, key)
+	}
+	value := valueI.(string)
+
+	result, err := c.Eval(ctx, unlockScript, []string{key}, value).Result()
+	if err != nil {
+		return err
+	}
+
+	c.locks.Delete(key)
+
+	if v, ok := result.(int64); !ok || v != 1 {
+		return fmt.Errorf("%w: %s", ErrLockReleaseFailed, key)
+	}
+
+	return nil
+}
+
+// getInstanceID returns the unique identifier for current instance
+func (c *RedisClient) getInstanceID() string {
+	hostname, _ := os.Hostname()
+	return fmt.Sprintf("%s:%d", hostname, os.Getpid())
+}
+
+// SetValue stores any type of value in Redis with automatic type handling
+func (c *RedisClient) SetValue(ctx context.Context, key string, value any, expiration time.Duration) error {
+	redisValue, err := c.convertValueToRedisArg(value)
+	if err != nil {
+		return fmt.Errorf("failed to convert value to redis arg: %w", err)
+	}
+
+	return c.Client.Set(ctx, key, redisValue, expiration).Err()
+}
+
+// GetValue retrieves a value from Redis with automatic type conversion
+// The result parameter must be a pointer
+// Supported types:
+// - string
+// - []byte
+// - int
+// - int64
+// - float32
+// - float64
+// - bool
+// - time.Time
+// For other types, JSON deserialization will be performed
+func (c *RedisClient) GetValue(ctx context.Context, key string, result any) error {
+	rt := reflect.TypeOf(result)
+	if rt.Kind() != reflect.Ptr {
+		return fmt.Errorf("result must be a pointer")
+	}
+
+	cmd := c.Client.Get(ctx, key)
+	if cmd.Err() != nil {
+		return cmd.Err()
+	}
+
+	return c.convertRedisValueToType(cmd, result)
+}
+
+func (c *RedisClient) DeleteValue(ctx context.Context, key string) error {
+	return c.Client.Del(ctx, key).Err()
+}
+
+func (c *RedisClient) LPushValue(ctx context.Context, key string, values ...any) error {
+	args := make([]any, len(values))
+	for i, value := range values {
+		arg, err := c.convertValueToRedisArg(value)
+		if err != nil {
+			return fmt.Errorf("failed to convert item %d: %w", i, err)
+		}
+		args[i] = arg
+	}
+	return c.LPush(ctx, key, args...).Err()
+}
+
+func (c *RedisClient) LPopValue(ctx context.Context, key string, result any) error {
+	rt := reflect.TypeOf(result)
+	if rt.Kind() != reflect.Ptr {
+		return fmt.Errorf("result must be a pointer")
+	}
+
+	cmd := c.LPop(ctx, key)
+	if cmd.Err() != nil {
+		return cmd.Err()
+	}
+
+	return c.convertRedisValueToType(cmd, result)
+}
+
+func (c *RedisClient) RPushValue(ctx context.Context, key string, values ...any) error {
+	args := make([]any, len(values))
+	for i, value := range values {
+		arg, err := c.convertValueToRedisArg(value)
+		if err != nil {
+			return fmt.Errorf("failed to convert item %d: %w", i, err)
+		}
+		args[i] = arg
+	}
+	return c.RPush(ctx, key, args...).Err()
+}
+
+func (c *RedisClient) RPopValue(ctx context.Context, key string, result any) error {
+	rt := reflect.TypeOf(result)
+	if rt.Kind() != reflect.Ptr {
+		return fmt.Errorf("result must be a pointer")
+	}
+
+	cmd := c.RPop(ctx, key)
+	if cmd.Err() != nil {
+		return cmd.Err()
+	}
+
+	return c.convertRedisValueToType(cmd, result)
+}
+
+// RangeValue retrieves a range of values from the list and converts them to the specified slice type
+// start and stop are inclusive indices
+// For example: 0, 10 means get the first 11 elements
+// -1 represents the last element, -2 represents the second to last element, and so on
+func (c *RedisClient) RangeValue(ctx context.Context, key string, start, stop int64, resultPtr any) error {
+	resultValue := reflect.ValueOf(resultPtr)
+	if !resultValue.IsValid() {
+		return fmt.Errorf("result must not be nil")
+	}
+
+	if resultValue.Kind() != reflect.Ptr {
+		return fmt.Errorf("result must be a pointer")
+	}
+
+	resultValue = resultValue.Elem()
+	if resultValue.Kind() != reflect.Slice {
+		return fmt.Errorf("result must be a slice")
+	}
+
+	cmd := c.LRange(ctx, key, start, stop)
+	if cmd.Err() != nil {
+		return cmd.Err()
+	}
+	return scanRedisSlice(cmd.Val(), resultValue)
+}
+
+// RRangeValue retrieves a range of values from the list starting from the right and converts them to the specified slice type
+// start and stop are inclusive indices counted from the right
+// For example: 0, 10 means get the first 11 elements from the right
+// Note: start and stop are counted from the right, where 0 represents the rightmost element
+func (c *RedisClient) RRangeValue(ctx context.Context, key string, start, stop int64, resultPtr any) error {
+	length, err := c.LLen(ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get list length: %w", err)
+	}
+
+	leftStart := length - stop - 1
+	leftStop := length - start - 1
+
+	return c.RangeValue(ctx, key, leftStart, leftStop, resultPtr)
+}
+
+// convertRedisValueToType converts a Redis string value to the specified type
+func (c *RedisClient) convertRedisValueToType(cmd *redis.StringCmd, result any) (err error) {
+	return scan([]byte(cmd.Val()), result)
+}
+
+// convertValueToRedisArg converts a value to a format suitable for Redis storage
+func (c *RedisClient) convertValueToRedisArg(value any) (any, error) {
+	switch v := value.(type) {
+	case int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64,
+		string,
+		bool,
+		time.Time, time.Duration,
+		[]byte:
+		return v, nil
+	default:
+		jsonBytes, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("json marshal failed: %w", err)
+		}
+		return string(jsonBytes), nil
+	}
+}

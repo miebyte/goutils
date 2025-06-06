@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/miebyte/goutils/internal/share"
@@ -93,12 +92,9 @@ func NewCores(opts ...ServiceOption) *CoresService {
 
 func (c *CoresService) serve() error {
 	if share.ServiceName() != "" {
-		segs := strings.SplitN(share.ServiceName(), ":", 2)
-		if len(segs) < 2 {
-			c.serviceName = share.ServiceName()
-		} else {
-			c.serviceName = segs[0]
-			c.tags = append(c.tags, segs[1])
+		c.serviceName = share.ServiceName()
+		if share.Tag() != "" {
+			c.tags = append(c.tags, share.Tag())
 		}
 		c.ctx = logging.With(c.ctx, "Service", share.ServiceName())
 	}

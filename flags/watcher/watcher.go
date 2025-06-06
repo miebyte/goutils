@@ -10,6 +10,12 @@ package watcher
 
 import "github.com/spf13/viper"
 
+type Option struct {
+	ServiceName string
+	Tag         string
+	ConfigPath  string
+}
+
 type ConfigWatcher interface {
-	WatchConfig(v *viper.Viper, path string)
+	WatchConfig(v *viper.Viper, opt *Option)
 }

@@ -73,12 +73,8 @@ func main() {
 
 	// 创建一个新的 Cores 服务实例
 	srv := cores.NewCores(
-		// 设置服务别名
-		cores.WithServiceAlias("my-service"),
 		// 启用 pprof 性能分析接口
 		cores.WithPprof(),
-		// 启用链路追踪
-		cores.WithTracing(),
 		// 配置HTTP处理器
 		cores.WithHttpHandler("/api", myHttpHandler),
 		// 启用跨域支持

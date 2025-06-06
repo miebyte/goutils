@@ -22,7 +22,7 @@ var (
 )
 
 func main() {
-	flags.Parse(flags.UseRemote())
+	flags.Parse()
 
 	srv := cores.NewCores(
 		// cores.WithWaitAllDone(),

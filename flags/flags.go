@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/miebyte/goutils/discover"
 	"github.com/miebyte/goutils/flags/reader"
+	"github.com/miebyte/goutils/flags/watcher"
 	"github.com/miebyte/goutils/internal/consul"
 	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
@@ -26,6 +28,8 @@ import (
 
 	consulReader "github.com/miebyte/goutils/flags/reader/consul"
 	localReader "github.com/miebyte/goutils/flags/reader/local"
+	consulWatcher "github.com/miebyte/goutils/flags/watcher/consul"
+	localWatcher "github.com/miebyte/goutils/flags/watcher/local"
 )
 
 const (
@@ -34,27 +38,18 @@ const (
 )
 
 var (
-	v                                       = viper.New()
-	requiredFlags                           = []string{}
-	nestedKey                               = map[string]any{}
-	defaultConfigName                       = "config"
-	defaultConfigType                       = "json"
-	defaultConfigReader reader.ConfigReader = localReader.NewLocalConfigReader()
+	v                                          = viper.New()
+	requiredFlags                              = []string{}
+	nestedKey                                  = map[string]any{}
+	defaultConfigName                          = "config"
+	defaultConfigType                          = "json"
+	defaultConfigReader  reader.ConfigReader   = localReader.NewLocalConfigReader()
+	defaultConfigWatcher watcher.ConfigWatcher = localWatcher.NewLocalWatcher()
 
-	config StringGetter
+	config      StringGetter
+	useRemote   BoolGetter
+	watchConfig BoolGetter
 )
-
-type Option struct {
-	UseRemote bool
-}
-
-type OptionFunc func(*Option)
-
-func UseRemote() OptionFunc {
-	return func(o *Option) {
-		o.UseRemote = true
-	}
-}
 
 func Viper() *viper.Viper {
 	return v
@@ -64,29 +59,48 @@ func GetServiceName() string {
 	return share.ServiceName()
 }
 
-func Parse(opts ...OptionFunc) {
-	opt := initOption(opts...)
-
-	initViper(opt)
+func Parse() {
+	initViper()
 	pflag.Parse()
 
 	// reset project name while specify service name by flag
 	os.Setenv(projectNameKey, share.ServiceName())
+	parseService()
 
 	if share.Debug() {
 		logging.Enable(level.LevelDebug)
 	}
 
-	if opt.UseRemote && config() == "" {
+	if useRemote() && config() == "" {
 		checkServiceName()
-		defaultConfigReader = consulReader.NewConsulConfigReader()
 		discover.SetFinder(consul.GetConsulClient())
+
+		defaultConfigReader = consulReader.NewConsulConfigReader()
+		defaultConfigWatcher = consulWatcher.NewConsulWatcher()
 	}
 
-	readConfig(opt)
+	if watchConfig() {
+		startWatchConfig()
+	}
+
+	readConfig()
 	checkFlagKey()
 
 	snail.Init()
+}
+
+func parseService() {
+	if share.ServiceName() == "" {
+		return
+	}
+
+	segs := strings.SplitN(share.ServiceName(), ":", 2)
+	if len(segs) >= 2 {
+		share.SetServiceName(segs[0])
+		share.SetTag(segs[1])
+	} else {
+		share.SetTag("dev")
+	}
 }
 
 func checkServiceName() {
@@ -95,17 +109,7 @@ func checkServiceName() {
 	}
 }
 
-func initOption(opts ...OptionFunc) *Option {
-	opt := &Option{}
-
-	for _, o := range opts {
-		o(opt)
-	}
-
-	return opt
-}
-
-func initViper(_ *Option) {
+func initViper() {
 	v.AddConfigPath(".")
 	v.AddConfigPath("./configs")
 	v.AddConfigPath(os.Getenv("HOME"))
@@ -113,19 +117,31 @@ func initViper(_ *Option) {
 	v.SetConfigName(defaultConfigName)
 	v.SetConfigType(defaultConfigType)
 
-	share.ServiceName = StringP("serviceName", "s", os.Getenv(projectNameKey), "Set the service name")
+	share.ServiceName = StringP("serviceName", "s", os.Getenv(projectNameKey), "Set the service name.")
 	share.Debug = Bool("debug", false, "Whether to enable debug mode.")
 	config = StringP("configFile", "f", "", "Specify config file. Support json, yaml, toml.")
+	useRemote = Bool("remoteConfig", false, "True to use remote config.")
+	watchConfig = Bool("watchConfig", false, "Set true to watch change on remote config.")
 
 	if err := v.BindPFlags(pflag.CommandLine); err != nil {
 		fmt.Println("BindPflags error", err)
 	}
 }
 
-func readConfig(_ *Option) {
+func startWatchConfig() {
+	watchOpt := &watcher.Option{
+		ServiceName: share.ServiceName(),
+		Tag:         share.Tag(),
+		ConfigPath:  config(),
+	}
+
+	defaultConfigWatcher.WatchConfig(v, watchOpt)
+}
+
+func readConfig() {
 	readOpt := &reader.Option{
 		ServiceName: share.ServiceName(),
-		Tag:         "dev",
+		Tag:         share.Tag(),
 		ConfigPath:  config(),
 	}
 

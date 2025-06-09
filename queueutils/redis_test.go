@@ -6,7 +6,7 @@
 //
 // (c) 2024 Example Corp. All rights reserved.
 
-package pqueue
+package queueutils
 
 import (
 	"errors"

@@ -51,12 +51,13 @@ type CoresService struct {
 	httpHandler http.Handler
 	httpCors    bool
 
-	grpcUIEnable          bool
-	grpcServer            *grpc.Server
-	grpcServersFunc       []func(*grpc.Server)
-	grpcOptions           []grpc.ServerOption
-	grpcUnaryInterceptors []grpc.UnaryServerInterceptor
-	grpcSelfConn          *grpc.ClientConn
+	grpcUIEnable           bool
+	grpcServer             *grpc.Server
+	grpcServersFunc        []func(*grpc.Server)
+	grpcOptions            []grpc.ServerOption
+	grpcUnaryInterceptors  []grpc.UnaryServerInterceptor
+	grpcStreamInterceptors []grpc.StreamServerInterceptor
+	grpcSelfConn           *grpc.ClientConn
 
 	workers     []Worker
 	mountFns    []mountFn
@@ -89,6 +90,8 @@ func NewCores(opts ...ServiceOption) *CoresService {
 		mountFns: make([]mountFn, 0),
 	}
 	cs.httpHandler = cs.httpMux
+	cs.grpcUnaryInterceptors = append(cs.grpcUnaryInterceptors, unaryServerLoggerInterceptor)
+	cs.grpcStreamInterceptors = append(cs.grpcStreamInterceptors, streamServerLoggerInterceptor)
 
 	for _, opt := range opts {
 		opt(cs)

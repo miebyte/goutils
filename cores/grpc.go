@@ -13,12 +13,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/fullstorydev/grpcui/standalone"
 	"github.com/miebyte/goutils/logging"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -41,6 +43,18 @@ func WithGrpcOptions(opt grpc.ServerOption) ServiceOption {
 func WithGrpcUI() ServiceOption {
 	return func(c *CoresService) {
 		c.grpcUIEnable = true
+	}
+}
+
+func WithGRPCUnaryInterceptors(interceptors ...grpc.UnaryServerInterceptor) ServiceOption {
+	return func(c *CoresService) {
+		c.grpcUnaryInterceptors = append(c.grpcUnaryInterceptors, interceptors...)
+	}
+}
+
+func WithGRPCStreamInterceptors(interceptors ...grpc.StreamServerInterceptor) ServiceOption {
+	return func(c *CoresService) {
+		c.grpcStreamInterceptors = append(c.grpcStreamInterceptors, interceptors...)
 	}
 }
 
@@ -97,4 +111,83 @@ func (c *CoresService) mountGRPCUI() mountFn {
 		},
 		name: "GRPCUI",
 	}
+}
+
+func unaryServerLoggerInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	if strings.HasPrefix(info.FullMethod, "/grpc.reflection") {
+		return handler(ctx, req)
+	}
+
+	prefix := strings.TrimPrefix(info.FullMethod, "/")
+	ctx = logging.With(ctx, prefix)
+
+	td := logging.TimeFuncDuration()
+	ret, err := handler(ctx, req)
+	duration := td()
+	if err != nil {
+		logging.Debugc(ctx, "Failed to handle method %s handle_time=%s handle_err=%s", info.FullMethod, duration, err)
+	} else {
+		logging.Debugc(ctx, "Succeed to handle method %s handle_time=%s", info.FullMethod, duration)
+	}
+
+	return ret, err
+}
+
+func streamServerLoggerInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if strings.HasPrefix(info.FullMethod, "/grpc.reflection") {
+		return handler(srv, ss)
+	}
+
+	ctx := ss.Context()
+
+	prefix := strings.TrimPrefix(info.FullMethod, "/")
+	ctx = logging.With(ctx, prefix)
+	ss = newInjectServerStream(ctx, ss)
+
+	td := logging.TimeFuncDuration()
+	err := handler(srv, ss)
+	duration := td()
+	if err != nil {
+		logging.Debugc(ctx, "Failed to handle method %s handle_time=%s handle_err=%s", info.FullMethod, duration, err)
+	} else {
+		logging.Debugc(ctx, "Succeed to handle method %s handle_time=%s", info.FullMethod, duration)
+	}
+
+	return err
+}
+
+type injectServerStream struct {
+	ctx context.Context
+	ss  grpc.ServerStream
+}
+
+func newInjectServerStream(ctx context.Context, ss grpc.ServerStream) *injectServerStream {
+	return &injectServerStream{
+		ss:  ss,
+		ctx: ctx,
+	}
+}
+
+func (ss *injectServerStream) SetHeader(md metadata.MD) error {
+	return ss.ss.SetHeader(md)
+}
+
+func (ss *injectServerStream) SendHeader(md metadata.MD) error {
+	return ss.ss.SendHeader(md)
+}
+
+func (ss *injectServerStream) SetTrailer(md metadata.MD) {
+	ss.ss.SetTrailer(md)
+}
+
+func (ss *injectServerStream) Context() context.Context {
+	return ss.ctx
+}
+
+func (ss *injectServerStream) SendMsg(m interface{}) error {
+	return ss.ss.SendMsg(m)
+}
+
+func (ss *injectServerStream) RecvMsg(m interface{}) error {
+	return ss.ss.RecvMsg(m)
 }

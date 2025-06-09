@@ -3,13 +3,14 @@ package redisutils
 import (
 	"fmt"
 
+	"github.com/miebyte/goutils/discover"
 	"github.com/pkg/errors"
 )
 
 type RedisConfig struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
+	Server   string `json:"server"`
 	Db       int    `json:"db"`
+	Username string `json:"username"`
 	Password string `json:"password"`
 	MinSize  int    `json:"minsize"`
 	MaxSize  int    `json:"maxsize"`
@@ -18,7 +19,7 @@ type RedisConfig struct {
 }
 
 func (rc *RedisConfig) Address() string {
-	return fmt.Sprintf("%s:%d", rc.Host, rc.Port)
+	return discover.GetServiceFinder().GetAddress(rc.Server)
 }
 
 func (conf *RedisConfig) DialGORedisClient() (*RedisClient, error) {
@@ -26,12 +27,8 @@ func (conf *RedisConfig) DialGORedisClient() (*RedisClient, error) {
 }
 
 func (conf *RedisConfig) SetDefault() {
-	if conf.Host == "" {
-		conf.Host = "localhost"
-	}
-
-	if conf.Port == 0 {
-		conf.Port = 6379
+	if conf.Server == "" {
+		conf.Server = "localhost:6379"
 	}
 
 	if conf.Db == 0 {

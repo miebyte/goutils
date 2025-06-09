@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/miebyte/goutils/discover"
 	"github.com/pkg/errors"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -19,17 +20,16 @@ import (
 )
 
 type MysqlConfig struct {
-	Host     string `json:"host"`
-	Port     string `json:"port"`
-	Db       string `json:"db"`
-	User     string `json:"user"`
+	Instance string `json:"instance"`
+	Database string `json:"database"`
+	Username string `json:"username"`
 	Password string `json:"password"`
 	Charset  string `json:"charset"`
 	PoolSize int    `json:"pool_size"`
 }
 
 func (c *MysqlConfig) Address() string {
-	return fmt.Sprintf("%s:%s", c.Host, c.Port)
+	return discover.GetServiceFinder().GetAddress(c.Instance)
 }
 
 func (c *MysqlConfig) generateDSN() string {
@@ -39,10 +39,10 @@ func (c *MysqlConfig) generateDSN() string {
 
 	dsn := fmt.Sprintf(
 		"%s:%s@tcp(%s)/%s?charset=%s&parseTime=True&loc=Local",
-		c.User,
+		c.Username,
 		c.Password,
 		c.Address(),
-		c.Db,
+		c.Database,
 		c.Charset,
 	)
 	return dsn
@@ -167,11 +167,6 @@ func (mp MysqlPool) GetDBWithResolver(routerConfig *DBRouterConfig) (*gorm.DB, e
 		tables := resolverConfig.ResolversTables()
 		resolvers := append(tables, appName)
 		dbResolver = dbResolver.Register(config, resolvers...)
-		// if len(tables) == 0 {
-		// 	dbResolver = dbResolver.Register(config, appName)
-		// } else {
-		// 	dbResolver = dbResolver.Register(config, tables...)
-		// }
 	}
 
 	if err := defaultDb.Use(dbResolver); err != nil {

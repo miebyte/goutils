@@ -18,7 +18,9 @@ import (
 	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
 	"github.com/pkg/errors"
+	"github.com/soheilhy/cmux"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
 )
 
 type listenerGetter func() net.Listener
@@ -40,22 +42,27 @@ type CoresService struct {
 	serviceName string
 	tags        []string
 
-	listenAddr  string
-	listener    net.Listener
+	listenAddr   string
+	listener     net.Listener
+	cmuxListener cmux.CMux
+
 	httpMux     *http.ServeMux
 	httpPattern string
 	httpHandler http.Handler
 	httpCors    bool
 
+	grpcUIEnable          bool
+	grpcServer            *grpc.Server
+	grpcServersFunc       []func(*grpc.Server)
+	grpcOptions           []grpc.ServerOption
+	grpcUnaryInterceptors []grpc.UnaryServerInterceptor
+	grpcSelfConn          *grpc.ClientConn
+
 	workers     []Worker
 	mountFns    []mountFn
 	waitAllDone bool
 
-	sentryMonitor bool
-	useKafkaLog   bool
-	usePprof      bool
-
-	useTracing bool
+	usePprof bool
 }
 
 type ServiceOption func(*CoresService)
@@ -91,6 +98,45 @@ func NewCores(opts ...ServiceOption) *CoresService {
 }
 
 func (c *CoresService) serve() error {
+	c.injectServiceName()
+
+	c.mountFns = []mountFn{
+		c.gracefulKill(),
+		c.registerService(),
+	}
+
+	if c.listener == nil {
+		return c.startServer()
+	}
+
+	if len(c.grpcServersFunc) == 0 {
+		c.mountFns = append(c.mountFns, c.listenHttp(c.listener))
+	} else {
+		c.cmuxListener = cmux.New(c.listener)
+		grpcLst := c.cmuxListener.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
+		httpLst := c.cmuxListener.Match(cmux.HTTP1Fast(), cmux.HTTP2())
+
+		c.startGrpcServer()
+
+		c.mountFns = append(c.mountFns, c.listenHttp(httpLst))
+		c.mountFns = append(c.mountFns, c.listenGrpc(grpcLst))
+		c.mountFns = append(c.mountFns, c.listenCmux())
+		c.mountFns = append(c.mountFns, c.mountGRPCUI())
+	}
+
+	return c.startServer()
+}
+
+func (c *CoresService) listenCmux() mountFn {
+	return mountFn{
+		fn: func(ctx context.Context) error {
+			return c.cmuxListener.Serve()
+		},
+		name: "CmuxListener",
+	}
+}
+
+func (c *CoresService) injectServiceName() {
 	if share.ServiceName() != "" {
 		c.serviceName = share.ServiceName()
 		if share.Tag() != "" {
@@ -102,16 +148,9 @@ func (c *CoresService) serve() error {
 	if len(c.tags) == 0 {
 		c.tags = append(c.tags, "dev")
 	}
+}
 
-	c.mountFns = []mountFn{
-		c.gracefulKill(),
-		c.registerService(),
-	}
-
-	if c.listener != nil {
-		c.mountFns = append(c.mountFns, c.listenHttp())
-	}
-
+func (c *CoresService) startServer() error {
 	c.wrapWorker()
 	c.setupPprof()
 

@@ -26,6 +26,10 @@ func (c *CoresService) welcome() {
 		logging.Infof("HttpHandler enabled. URL=%s\n", fmt.Sprintf("http://%s%s", target, c.httpPattern))
 	}
 
+	if c.grpcUIEnable {
+		logging.Infoc(c.ctx, "GRPCUI enabled. URL=%s", fmt.Sprintf("http://%s%s", c.grpcSelfConn.Target(), grpcuiUrl))
+	}
+
 	if c.serviceName != "" {
 		logging.Infof("Service: %s Tags: %v Started.\n", c.serviceName, c.tags)
 	} else {

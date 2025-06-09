@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/pkg/errors"
 	"github.com/miebyte/goutils/logging"
+	"github.com/pkg/errors"
 )
 
 func WithHttpCORS() ServiceOption {
@@ -41,21 +41,15 @@ func WithHttpHandler(pattern string, handler http.Handler) ServiceOption {
 	}
 }
 
-func (c *CoresService) listenHttp() mountFn {
+func (c *CoresService) listenHttp(lst net.Listener) mountFn {
 	return mountFn{
 		fn: func(ctx context.Context) (err error) {
-			go func() {
-				<-ctx.Done()
-				_ = c.listener.Close()
-			}()
-
-			err = http.Serve(c.listener, c.httpHandler)
+			err = http.Serve(lst, c.httpHandler)
 			if errors.Is(err, net.ErrClosed) {
 				logging.Warnc(ctx, "listener is close. %v", err)
 				return nil
 			} else if err != nil {
 				logging.Errorc(ctx, "HttpListener serve error: %v\n", err)
-				_ = c.listener.Close()
 				return err
 			}
 			return nil

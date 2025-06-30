@@ -34,7 +34,6 @@ import (
 
 const (
 	projectNameKey = "PROJECT_NAME"
-	namespaceKey   = "NAMESPACE"
 )
 
 var (

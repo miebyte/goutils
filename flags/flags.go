@@ -92,6 +92,7 @@ func Parse(opts ...ParseOption) {
 		checkServiceName()
 		discover.SetFinder(consul.GetConsulClient())
 
+		logging.Infof("Use Remote Config")
 		defaultConfigReader = consulReader.NewConsulConfigReader()
 		defaultConfigWatcher = consulWatcher.NewConsulWatcher()
 	}

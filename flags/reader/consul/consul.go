@@ -66,6 +66,7 @@ func (cr *consulConfigReader) getRemotePossiblePath(name, tag string) string {
 		}
 	}
 
+	logging.Infof("Reading consul config from possiblePath(%s)", possiblePath)
 	return possiblePath
 }
 
@@ -74,12 +75,12 @@ func (cr *consulConfigReader) ReadConfig(v *viper.Viper, opt *reader.Option) err
 		return errors.New("No service find. ServiceName and Tag is empty.")
 	}
 
+	logging.Infof("Reading consul config from Service(%s) Tag(%s)", opt.ServiceName, opt.Tag)
 	path := cr.getRemotePossiblePath(opt.ServiceName, opt.Tag)
 	if path == "" {
 		return errors.New("No config found.")
 	}
 
-	logging.Infof("Reading consul config from %v", path)
 	v.AddRemoteProvider("consul", share.ConsulAddr(), path)
 	v.SetConfigType("yaml")
 
@@ -87,6 +88,6 @@ func (cr *consulConfigReader) ReadConfig(v *viper.Viper, opt *reader.Option) err
 		return errors.Wrap(err, "readRemoteConfig")
 	}
 
-	logging.Infof("Read remote config(%v:%v) success. Config=%v", opt.ServiceName, opt.Tag, opt.ConfigPath)
+	logging.Infof("Read remote config(%v:%v) success. Config=%v", opt.ServiceName, opt.Tag, path)
 	return nil
 }

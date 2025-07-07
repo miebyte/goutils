@@ -41,7 +41,7 @@ var (
 	requiredFlags                              = []string{}
 	nestedKey                                  = map[string]any{}
 	defaultConfigName                          = "config"
-	defaultConfigType                          = "json"
+	defaultConfigType                          = "yaml"
 	defaultConfigReader  reader.ConfigReader   = localReader.NewLocalConfigReader()
 	defaultConfigWatcher watcher.ConfigWatcher = localWatcher.NewLocalWatcher()
 
@@ -58,7 +58,25 @@ func GetServiceName() string {
 	return share.ServiceName()
 }
 
-func Parse() {
+type ParseOption func()
+
+func WithConfigType(t string) ParseOption {
+	return func() {
+		defaultConfigType = t
+	}
+}
+
+func WithConfigName(n string) ParseOption {
+	return func() {
+		defaultConfigName = n
+	}
+}
+
+func Parse(opts ...ParseOption) {
+	for _, opt := range opts {
+		opt()
+	}
+
 	initViper()
 	pflag.Parse()
 

@@ -74,6 +74,8 @@ func getConsulHostFromEnv() string {
 
 func setShareConsulAddr(host string) {
 	share.ConsulAddr = func() string { return fmt.Sprintf("%s:8500", host) }
+
+	fmt.Println("Consul Addr:", share.ConsulAddr())
 }
 
 func GetConsulAddress() string {

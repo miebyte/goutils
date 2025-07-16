@@ -226,10 +226,11 @@ func (c *Client) RegisterServiceWithTags(serviceName string, address string, tag
 	checkID := fmt.Sprintf("service:%s", serviceID)
 
 	regis := &api.AgentServiceRegistration{
-		ID:   serviceID,
-		Name: serviceName,
-		Port: ip.Port,
-		Tags: tags,
+		ID:      serviceID,
+		Name:    serviceName,
+		Port:    ip.Port,
+		Address: ip.IP.String(),
+		Tags:    tags,
 		Check: &api.AgentServiceCheck{
 			CheckID:                        checkID,
 			Name:                           serviceID,

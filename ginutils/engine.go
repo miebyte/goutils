@@ -35,7 +35,7 @@ func Default(opts ...gin.OptionFunc) *gin.Engine {
 }
 
 func NewServerHandler(opts ...Option) *gin.Engine {
-	engine := gin.New()
+	engine := Default()
 
 	for _, opt := range opts {
 		opt(engine)

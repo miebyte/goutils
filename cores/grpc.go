@@ -86,7 +86,26 @@ func (c *CoresService) grpcSelfConnect(lst net.Listener) error {
 }
 
 func (c *CoresService) startGrpcServer() {
-	c.grpcServer = grpc.NewServer(c.grpcOptions...)
+	opts := []grpc.ServerOption{}
+
+	unaryInterceptors := []grpc.UnaryServerInterceptor{}
+	streamInterceptors := []grpc.StreamServerInterceptor{}
+
+	unaryInterceptors = append(unaryInterceptors, c.grpcUnaryInterceptors...)
+
+	streamInterceptors = append(streamInterceptors, c.grpcStreamInterceptors...)
+
+	if len(unaryInterceptors) != 0 {
+		opts = append(opts, grpc.ChainUnaryInterceptor(unaryInterceptors...))
+	}
+
+	if len(streamInterceptors) != 0 {
+		opts = append(opts, grpc.ChainStreamInterceptor(streamInterceptors...))
+	}
+
+	opts = append(opts, c.grpcOptions...)
+
+	c.grpcServer = grpc.NewServer(opts...)
 	for _, fn := range c.grpcServersFunc {
 		fn(c.grpcServer)
 	}

@@ -84,10 +84,6 @@ func Parse(opts ...ParseOption) {
 	os.Setenv(projectNameKey, share.ServiceName())
 	parseService()
 
-	if share.Debug() {
-		logging.Enable(level.LevelDebug)
-	}
-
 	if useRemote() && config() == "" {
 		checkServiceName()
 		discover.SetFinder(consul.GetConsulClient())
@@ -103,6 +99,10 @@ func Parse(opts ...ParseOption) {
 
 	readConfig()
 	checkFlagKey()
+
+	if share.Debug() {
+		logging.Enable(level.LevelDebug)
+	}
 
 	snail.Init()
 }

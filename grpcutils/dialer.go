@@ -9,11 +9,9 @@
 package grpcutils
 
 import (
-	"context"
-	"net"
+	"fmt"
 
-	"github.com/miebyte/goutils/discover"
-	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/internal/share"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -24,7 +22,6 @@ func DialGrpc(service string, opts ...grpc.DialOption) (*grpc.ClientConn, error)
 		return nil, err
 	}
 
-	conn.Connect()
 	return conn, nil
 }
 
@@ -37,39 +34,28 @@ func DialGrpcWithTag(service string, tag string, opts ...grpc.DialOption) (*grpc
 }
 
 func dialGrpcWithTag(service, tag string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	options := append(opts, defaultGRPCDialOptions(tag)...)
-	options = append(options)
+	options := append(opts, defaultGRPCDialOptions()...)
 
+	target := fmt.Sprintf("%s://%s/%s", consulScheme, service, tag)
 	conn, err := grpc.NewClient(
-		service,
+		target,
 		options...,
 	)
-
-	conn.Connect()
 
 	return conn, err
 }
 
-func defaultGRPCDialOptions(tag string) []grpc.DialOption {
-	return []grpc.DialOption{
-		grpc.WithContextDialer(grpcConnDialFn(tag)),
+func defaultGRPCDialOptions() []grpc.DialOption {
+	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(1024 * 1024 * 16)),
 		grpc.WithChainUnaryInterceptor(unaryClientLoggerInterceptor()),
 		grpc.WithChainStreamInterceptor(streamClientLoggerInterceptor()),
 	}
-}
 
-func grpcConnDialFn(tag string) func(context.Context, string) (net.Conn, error) {
-	return func(ctx context.Context, service string) (net.Conn, error) {
-		address := discover.GetServiceFinder().GetAddressWithTag(service, tag)
-
-		if tag != "" {
-			logging.Debugc(ctx, "dial grpc service %s with tag %s. Addr=%s", service, tag, address)
-		} else {
-			logging.Debugc(ctx, "dial grpc service %s. Addr=%s", service, address)
-		}
-
-		return net.Dial("tcp", address)
+	if share.UseConsul() {
+		opts = append(opts, grpc.WithResolvers(&consulResolverBuilder{}))
 	}
+
+	return opts
 }

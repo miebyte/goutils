@@ -12,6 +12,7 @@ var (
 	ServiceName func() string = func() string { return "" }
 	Tag         func() string = func() string { return "" }
 	Debug       func() bool   = func() bool { return false }
+	UseConsul   func() bool   = func() bool { return false }
 	ConsulAddr  func() string = func() string { return "" }
 )
 

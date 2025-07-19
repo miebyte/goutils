@@ -54,8 +54,20 @@ func (cr *consulConfigReader) getServerKey(name string) string {
 
 func (cr *consulConfigReader) getRemotePossiblePath(name, tag string) string {
 	var possiblePath string
+	defer func() {
+		logging.Infof("Reading consul config from possiblePath(%s)", possiblePath)
+	}()
 
 	kv := consul.GetConsulClient().KV()
+	if tag == "dev" {
+		path := fmt.Sprintf("%s/%s.yaml", cr.getServerKey(name), tag)
+		pair, _, err := kv.Get(path, nil)
+		if err == nil && pair != nil {
+			possiblePath = path
+			return possiblePath
+		}
+	}
+
 	for _, t := range listPossibleTags(tag) {
 		path := fmt.Sprintf("%s/%s.yaml", cr.getServerKey(name), t)
 
@@ -66,7 +78,6 @@ func (cr *consulConfigReader) getRemotePossiblePath(name, tag string) string {
 		}
 	}
 
-	logging.Infof("Reading consul config from possiblePath(%s)", possiblePath)
 	return possiblePath
 }
 

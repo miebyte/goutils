@@ -10,6 +10,7 @@ package cores
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -198,8 +199,13 @@ func Start[T listenEntry](srv *CoresService, addr T) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to start listener")
 	}
-
 	srv.listener = listener
 	srv.listenAddr = listener.Addr().String()
+
+	lstAddr, ok := listener.Addr().(*net.TCPAddr)
+	if ok && lstAddr.IP.IsUnspecified() {
+		srv.listenAddr = fmt.Sprintf("127.0.0.1:%v", lstAddr.Port)
+	}
+
 	return srv.serve()
 }

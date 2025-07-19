@@ -139,10 +139,19 @@ func initViper() {
 	share.Debug = Bool("debug", false, "Whether to enable debug mode.")
 	config = StringP("configFile", "f", "", "Specify config file. Support json, yaml, toml.")
 	useRemote = Bool("remoteConfig", false, "True to use remote config.")
+	share.UseConsul = Bool("useConsul", false, "True to use consul to register service.")
 	watchConfig = Bool("watchConfig", false, "Set true to watch change on remote config.")
 
 	if err := v.BindPFlags(pflag.CommandLine); err != nil {
 		fmt.Println("BindPflags error", err)
+	}
+
+	if useRemote() {
+		share.UseConsul = func() bool { return true }
+	}
+
+	if share.UseConsul() {
+		discover.SetFinder(consul.GetConsulClient())
 	}
 }
 

@@ -84,9 +84,16 @@ func Parse(opts ...ParseOption) {
 	os.Setenv(projectNameKey, share.ServiceName())
 	parseService()
 
+	if useRemote() {
+		share.UseConsul = func() bool { return true }
+	}
+
+	if share.UseConsul() {
+		discover.SetFinder(consul.GetConsulClient())
+	}
+
 	if useRemote() && config() == "" {
 		checkServiceName()
-		discover.SetFinder(consul.GetConsulClient())
 
 		logging.Infof("Use Remote Config")
 		defaultConfigReader = consulReader.NewConsulConfigReader()
@@ -144,14 +151,6 @@ func initViper() {
 
 	if err := v.BindPFlags(pflag.CommandLine); err != nil {
 		fmt.Println("BindPflags error", err)
-	}
-
-	if useRemote() {
-		share.UseConsul = func() bool { return true }
-	}
-
-	if share.UseConsul() {
-		discover.SetFinder(consul.GetConsulClient())
 	}
 }
 

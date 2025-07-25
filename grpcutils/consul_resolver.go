@@ -67,7 +67,7 @@ func (cr *consulResolver) start() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			cr.ResolveNow(resolver.ResolveNowOptions{})
+			cr.resolve()
 
 			if !inited {
 				wg.Done()
@@ -79,7 +79,7 @@ func (cr *consulResolver) start() {
 	wg.Wait()
 }
 
-func (cr *consulResolver) ResolveNow(resolver.ResolveNowOptions) {
+func (cr *consulResolver) resolve() {
 	cr.lock.Lock()
 	if cr.closed {
 		cr.lock.Unlock()
@@ -122,6 +122,8 @@ func (cr *consulResolver) ResolveNow(resolver.ResolveNowOptions) {
 	logging.Debugf("Resolve service(%s) success", cr.srvTag())
 	cr.cc.UpdateState(resolver.State{Addresses: addrs})
 }
+
+func (cr *consulResolver) ResolveNow(resolver.ResolveNowOptions) {}
 
 func (cr *consulResolver) Close() {
 	cr.lock.Lock()

@@ -67,6 +67,14 @@ func (cr *consulResolver) start() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
+			cr.lock.Lock()
+			if cr.closed {
+				cr.lock.Unlock()
+				logging.Debugf("Resolved loop terminated", cr.service, cr.tag)
+				return
+			}
+			cr.lock.Unlock()
+
 			cr.resolve()
 
 			if !inited {
@@ -80,14 +88,6 @@ func (cr *consulResolver) start() {
 }
 
 func (cr *consulResolver) resolve() {
-	cr.lock.Lock()
-	if cr.closed {
-		cr.lock.Unlock()
-		logging.Debugf("Resolved loop terminated", cr.service, cr.tag)
-		return
-	}
-	cr.lock.Unlock()
-
 	var opt *api.QueryOptions
 	if cr.lastIndex > 0 {
 		opt = &api.QueryOptions{

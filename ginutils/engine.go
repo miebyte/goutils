@@ -95,6 +95,11 @@ func NewServerHandler(opts ...Option) *gin.Engine {
 		}
 
 		opt.applyGroup(root)
+
+		if len(root.middlewares) > 0 {
+			engine.Use(root.middlewares...)
+			root.middlewares = nil
+		}
 	}
 	root.register(engine)
 	return engine

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/miebyte/goutils/logging"
-	"github.com/miebyte/goutils/logging/slog"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/utils"
 )
@@ -69,10 +68,11 @@ func NewGormLogger(opts ...GormLoggerOption) *gormLogger {
 		traceErrStr  = "%s %s\n[%.3fms] [rows:%v] %s"
 	)
 
-	logger := slog.NewSlogPrettyLogger(
+	logger := logging.NewPrettyLogger(
 		os.Stdout,
-		slog.WithCalldepth(6),
+		logging.WithModule("GORM"),
 	)
+	logger.SetWithSource(false)
 
 	l := &gormLogger{
 		logger:       logger,

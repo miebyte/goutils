@@ -1,57 +1,69 @@
-// File:		with.go
-// Created by:	Hoven
-// Created on:	2025-04-03
-//
-// This file is part of the Example Project.
-//
-// (c) 2024 Example Corp. All rights reserved.
-
 package logging
 
-import (
-	"context"
-	"io"
+import "context"
 
-	"github.com/miebyte/goutils/logging/logctx"
-	"github.com/miebyte/goutils/masking"
+type loggingContextKey string
+
+const (
+	FieldContextKey loggingContextKey = "logging:FieldContextKey"
+
+	LoggingGroupKey = "logging:group:key"
 )
 
-// With used to store some data in log-ctx
-// Ie supports two forms of writing
-// 1. With(log-ctx, "group")
-// When only msg has a value, it is used as a group
-// 2. With(log-ctx, "key1", "value1") or With(log-ctx, "key1", "value1", "key2", "value2")
-// When msg and v both have values, With resolves them into key-value pairs
-// The parsed results are stored in the LogContext for use by the Logger
-func With(c context.Context, msg string, v ...any) context.Context {
-	if c == nil {
-		c = context.Background()
+func GetContextFields(c context.Context) Fields {
+	val := c.Value(FieldContextKey)
+	field, ok := val.(Fields)
+	if !ok {
+		return make(Fields)
 	}
 
-	if msg == "" && len(v) == 0 {
-		return c
-	}
-
-	lc := logctx.GetLogContext(c)
-	if lc == nil {
-		lc = &logctx.LogContext{}
-	}
-
-	newLc := logctx.CloneLogContext(lc)
-
-	newLc, err := newLc.ParseFmtKeyValue(msg, v...)
-	if err != nil {
-		Errorf("with parse error: %v", err)
-		return c
-	}
-
-	for idx, value := range newLc.Values {
-		newLc.Values[idx] = masking.MaskMessage(value)
-	}
-
-	return context.WithValue(c, logctx.LogContextKey, newLc)
+	return field.Clone()
 }
 
-func WithLogger(c context.Context, w io.Writer) context.Context {
-	return context.WithValue(c, logctx.LoggerKey, w)
+func With(c context.Context, key string, values ...any) context.Context {
+	if c == nil {
+		c = context.TODO()
+	}
+
+	if key == "" && len(values) == 0 {
+		return c
+	}
+
+	fields := GetContextFields(c)
+	newF := fields.Clone()
+
+	if len(values) == 0 {
+		appendGroupKey(newF, key)
+	} else {
+		newF[key] = values[0]
+	}
+
+	return context.WithValue(c, FieldContextKey, newF)
+}
+
+func appendGroupKey(fields Fields, group string) {
+	var groupList []string
+	value, exists := fields[LoggingGroupKey]
+	if !exists {
+		groupList = make([]string, 0)
+	} else {
+		groupList = value.([]string)
+	}
+
+	groupList = append(groupList, group)
+	fields[LoggingGroupKey] = groupList
+}
+
+func GetGroupKey(fields Fields) []string {
+	if fields == nil {
+		return nil
+	}
+
+	value, ok := fields[LoggingGroupKey]
+	if !ok {
+		return nil
+	}
+
+	delete(fields, LoggingGroupKey)
+	return value.([]string)
 }

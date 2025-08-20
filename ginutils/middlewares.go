@@ -14,11 +14,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/miebyte/goutils/logging"
-	"github.com/miebyte/goutils/logging/slog"
 )
 
 func ReuseBody() gin.HandlerFunc {
@@ -71,7 +71,8 @@ func requestBody(c *gin.Context) string {
 func LoggerMiddleware(loggers ...logging.Logger) gin.HandlerFunc {
 	var logger logging.Logger
 	if len(loggers) == 0 {
-		logger = slog.New()
+		logger = logging.NewPrettyLogger(os.Stdout, logging.WithModule("GINLIBS"))
+		logger.SetWithSource(false)
 	} else {
 		logger = loggers[0]
 	}

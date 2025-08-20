@@ -64,18 +64,23 @@ func (w *KafkaLogWriter) processMessages() {
 			return
 		case <-w.done:
 			return
-		case msg := <-w.messageChan:
+		case msg, ok := <-w.messageChan:
+			if !ok {
+				return
+			}
 			_ = w.kafkaWriter.WriteMessages(w.ctx, kafka.Message{Value: msg})
 
 			if w.toConsole && w.osWriter != nil {
-				w.osWriter.Write([]byte(msg))
+				w.osWriter.Write(msg)
 			}
 		}
 	}
 }
 
 func (w *KafkaLogWriter) Write(p []byte) (n int, err error) {
-	w.messageChan <- p
+	buf := make([]byte, len(p))
+	copy(buf, p)
+	w.messageChan <- buf
 	return len(p), nil
 }
 

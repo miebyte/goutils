@@ -10,10 +10,19 @@ package ginutils
 
 import (
 	"io"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/miebyte/goutils/logging"
 	"github.com/miebyte/goutils/snail"
+)
+
+var (
+	anyMethods = []string{
+		http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodHead, http.MethodOptions, http.MethodDelete, http.MethodConnect,
+		http.MethodTrace,
+	}
 )
 
 type Router interface {
@@ -144,6 +153,14 @@ func WithMiddleware(middlewares ...gin.HandlerFunc) Option {
 func WithHandler(method string, path string, handler gin.HandlerFunc) Option {
 	return groupOptionFunc(func(g *groupNode) {
 		g.routes = append(g.routes, methodRoute{method: method, path: path, handler: handler})
+	})
+}
+
+func WithAnyHandler(path string, handler gin.HandlerFunc) Option {
+	return groupOptionFunc(func(g *groupNode) {
+		for _, method := range anyMethods {
+			g.routes = append(g.routes, methodRoute{method: method, path: path, handler: handler})
+		}
 	})
 }
 

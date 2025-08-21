@@ -19,15 +19,17 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/logging/level"
 )
 
-func ReuseBody() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		buf := bytes.Buffer{}
-		c.Request.Body = io.NopCloser(io.TeeReader(c.Request.Body, &buf))
-		c.Next()
-		c.Request.Body = io.NopCloser(&buf)
-	}
+var (
+	Logger *logging.PrettyLogger
+)
+
+func init() {
+	Logger = logging.NewPrettyLogger(os.Stdout, logging.WithModule("GINLIBS"))
+	Logger.WithSource = false
+	Logger.Enable(level.LevelDebug)
 }
 
 const maxBodyLen = 1024
@@ -71,8 +73,7 @@ func requestBody(c *gin.Context) string {
 func LoggerMiddleware(loggers ...logging.Logger) gin.HandlerFunc {
 	var logger logging.Logger
 	if len(loggers) == 0 {
-		logger = logging.NewPrettyLogger(os.Stdout, logging.WithModule("GINLIBS"))
-		logger.SetWithSource(false)
+		logger = Logger
 	} else {
 		logger = loggers[0]
 	}
@@ -105,17 +106,31 @@ func LoggerMiddleware(loggers ...logging.Logger) gin.HandlerFunc {
 		}
 
 		args := []any{
+			path,
 			statusCode,
 			spendTime,
 			clientIp,
 			method,
-			path,
+		}
+
+		requestId, exists := c.Get("RequestID")
+		if exists {
+			args = append(args, requestId)
+			logFunc(c, logMsg+" RequestID=%s", args...)
+			return
 		}
 
 		logFunc(c, logMsg, args...)
 	}
 }
 
-const (
-	logMsg = "| %v | %13v | %15s | %4v | %#v"
+var (
+	logMsg = "Handle Path: %s StatusCode=%v Elapse=%v Host=%s Method=%s"
 )
+
+func customRecoveryFn(c *gin.Context, err any) {
+	Logger.Errorf(
+		"[GinRecover] panic error: %v. path=%s url=%s method=%s host=%s ip=%s",
+		err, c.Request.URL.Path, c.Request.URL, c.Request.Method, c.Request.Host, c.ClientIP(),
+	)
+}

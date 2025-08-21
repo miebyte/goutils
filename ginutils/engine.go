@@ -42,7 +42,10 @@ func init() {
 
 func Default(opts ...gin.OptionFunc) *gin.Engine {
 	engine := gin.New()
-	engine.Use(LoggerMiddleware(), gin.Recovery())
+	engine.Use(
+		LoggerMiddleware(),
+		gin.CustomRecovery(customRecoveryFn),
+	)
 	return engine.With(opts...)
 }
 
@@ -177,7 +180,6 @@ func WithRouterHandler(routers ...Router) Option {
 func WithLoggingRequest(header bool) gin.HandlerFunc {
 	return LoggingRequest(header)
 }
-func WithReuseBody() gin.HandlerFunc { return ReuseBody() }
 
 func WithHiddenRoutesLog() gin.HandlerFunc {
 	gin.DefaultWriter = io.Discard

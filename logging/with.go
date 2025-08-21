@@ -20,6 +20,11 @@ func GetContextFields(c context.Context) Fields {
 	return field.Clone()
 }
 
+func CloneContext(c context.Context) context.Context {
+	f := GetContextFields(c)
+	return context.WithValue(context.TODO(), FieldContextKey, f)
+}
+
 func With(c context.Context, key string, values ...any) context.Context {
 	if c == nil {
 		c = context.TODO()

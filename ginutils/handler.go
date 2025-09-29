@@ -10,7 +10,6 @@ package ginutils
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"reflect"
 
@@ -19,11 +18,11 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/miebyte/goutils/errorutils"
 	"github.com/miebyte/goutils/logging"
-	"github.com/pkg/errors"
 )
 
 var (
 	bindLoop = []bindStrategy{
+		&bodyBind{},
 		&headerBind{},
 		&urlBind{},
 		&queryBind{},
@@ -49,11 +48,6 @@ func ParseRequestParams(c *gin.Context, obj any) (err error) {
 		default:
 			return err
 		}
-	}
-
-	err = c.ShouldBind(obj)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return errors.Wrap(err, "bindJson")
 	}
 
 	return nil

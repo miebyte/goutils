@@ -8,7 +8,10 @@
 
 package ginutils
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
+)
 
 type bindStrategy interface {
 	Need(c *gin.Context) bool
@@ -43,4 +46,15 @@ func (b *queryBind) Need(c *gin.Context) bool {
 
 func (b *queryBind) Bind(c *gin.Context, obj any) error {
 	return c.ShouldBindQuery(obj)
+}
+
+type bodyBind struct{}
+
+func (b *bodyBind) Need(c *gin.Context) bool {
+	return c.Request.ContentLength > 0
+}
+
+func (b *bodyBind) Bind(c *gin.Context, obj any) error {
+	binder := binding.Default(c.Request.Method, c.ContentType())
+	return c.ShouldBindWith(obj, binder)
 }

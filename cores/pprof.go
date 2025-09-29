@@ -13,7 +13,7 @@ import (
 	"net"
 	"net/http/pprof"
 
-	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/internal/innerlog"
 )
 
 const (
@@ -32,7 +32,7 @@ func (cs *CoresService) setupPprof() {
 	}
 
 	if cs.listenAddr == "" {
-		logging.Warnf("Cores server not start by cores.Start(). Pprof can not be enabled")
+		innerlog.Logger.Warnf("Cores server not start by cores.Start(). Pprof can not be enabled")
 		return
 	}
 
@@ -49,6 +49,6 @@ func (cs *CoresService) setupPprof() {
 	_, port, _ := net.SplitHostPort(cs.listenAddr)
 	target := fmt.Sprintf("localhost:%s", port)
 
-	logging.Debugf("Pprof enabled. URL=%s", fmt.Sprintf("http://%s%s", target, pprofUrl))
+	innerlog.Logger.Debugf("Pprof enabled. URL=%s", fmt.Sprintf("http://%s%s", target, pprofUrl))
 
 }

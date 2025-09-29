@@ -14,11 +14,11 @@ func (fg Float64Getter) Value() float64 {
 
 func Float64(key string, defaultVal float64, usage string) Float64Getter {
 	pflag.Float64(key, defaultVal, usage)
-	v.SetDefault(key, defaultVal)
+	sf.SetDefault(key, defaultVal)
 	BindPFlag(key, pflag.Lookup(key))
 
 	return func() float64 {
-		return v.GetFloat64(key)
+		return sf.GetFloat64(key)
 	}
 }
 

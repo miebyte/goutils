@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 
 	"github.com/miebyte/goutils/logging/level"
@@ -170,6 +171,7 @@ func (l *PrettyLogger) Errorc(ctx context.Context, msg string, args ...any) {
 
 func (l *PrettyLogger) Fatalc(ctx context.Context, msg string, args ...any) {
 	l.logc(ctx, level.LevelError, msg, args...)
+	os.Exit(1)
 }
 
 func (l *PrettyLogger) Infof(msg string, args ...any) {
@@ -190,6 +192,7 @@ func (l *PrettyLogger) Errorf(msg string, args ...any) {
 
 func (l *PrettyLogger) Fatalf(msg string, args ...any) {
 	l.logf(level.LevelError, msg, args...)
+	os.Exit(1)
 }
 
 func (l *PrettyLogger) PanicError(err error, args ...any) {

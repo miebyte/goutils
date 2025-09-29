@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/pkg/errors"
 )
 
@@ -36,15 +36,21 @@ func (c *CoresService) gracefulKill() mountFn {
 
 			select {
 			case sg := <-ch:
-				logging.Infoc(ctx, "Graceful stopping service... Signal: %s", sg)
-				c.cancel()
+				innerlog.Logger.Infoc(ctx, "Graceful stopping service... Signal: %s", sg)
+
+				if c.httpServer != nil {
+					_ = c.httpServer.Shutdown(ctx)
+					innerlog.Logger.Infoc(ctx, "Graceful stopped http server")
+				}
 
 				if c.listener != nil {
 					_ = c.listener.Close()
-					logging.Infoc(ctx, "Graceful stopped listener")
+					innerlog.Logger.Infoc(ctx, "Graceful stopped listener")
 				}
 
-				logging.Infoc(ctx, "Graceful stopped service successfully")
+				c.cancel()
+
+				innerlog.Logger.Infoc(ctx, "Graceful stopped service successfully")
 				return errors.Errorf("Signal: %s", sg.String())
 			case <-ctx.Done():
 				return ctx.Err()

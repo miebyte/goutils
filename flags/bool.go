@@ -22,11 +22,11 @@ func (bg BoolGetter) Value() bool {
 
 func Bool(key string, defaultVal bool, usage string) BoolGetter {
 	pflag.Bool(key, defaultVal, usage)
-	v.SetDefault(key, defaultVal)
+	sf.SetDefault(key, defaultVal)
 	BindPFlag(key, pflag.Lookup(key))
 
 	return func() bool {
-		return v.GetBool(key)
+		return sf.GetBool(key)
 	}
 }
 

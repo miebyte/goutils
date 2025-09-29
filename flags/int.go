@@ -14,11 +14,11 @@ func (ig IntGetter) Value() int {
 
 func Int(key string, defaultVal int, usage string) IntGetter {
 	pflag.Int(key, defaultVal, usage)
-	v.SetDefault(key, defaultVal)
+	sf.SetDefault(key, defaultVal)
 	BindPFlag(key, pflag.Lookup(key))
 
 	return func() int {
-		return v.GetInt(key)
+		return sf.GetInt(key)
 	}
 }
 

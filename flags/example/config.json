@@ -1,0 +1,5 @@
+{
+    "bool": true,
+    "string": "thisisconfig",
+    "slice": ["test3", "test4"]
+}

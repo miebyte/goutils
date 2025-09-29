@@ -8,6 +8,12 @@
 
 package share
 
+import (
+	"os"
+
+	"github.com/miebyte/goutils/utils"
+)
+
 var (
 	ServiceName func() string = func() string { return "" }
 	Tag         func() string = func() string { return "" }
@@ -23,3 +29,17 @@ func SetServiceName(name string) {
 func SetTag(tag string) {
 	Tag = func() string { return tag }
 }
+
+const (
+	ProjectNameKey = "PROJECT_NAME"
+	NamespaceKey   = "NAMESPACE"
+	HostnameKey    = "HOSTNAME"
+	PodIpKey       = "POD_IP"
+)
+
+var (
+	HostName     = os.Getenv(HostnameKey)
+	PodIp        = os.Getenv(PodIpKey)
+	ProjectName  = utils.GetEnvByDefualt(ProjectNameKey, ProjectNameKey)
+	PodNamespace = utils.GetEnvByDefualt(NamespaceKey, NamespaceKey)
+)

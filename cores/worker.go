@@ -12,6 +12,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/miebyte/goutils/logging"
 	"github.com/pkg/errors"
 )
@@ -72,7 +73,7 @@ func WithNameWorker(name string, fn WorkerFunc, maxWaits ...time.Duration) Servi
 func (c *CoresService) mountSimpleWorker(worker *simpleWorker) {
 	fn := func(ctx context.Context) error {
 		if err := worker.fn(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			logging.Errorc(ctx, "worker: %v run error: %v\n", worker.name, err)
+			innerlog.Logger.Errorc(ctx, "worker: %v run error: %v\n", worker.name, err)
 			return errors.Wrapf(err, "simpleWorker: %v run failed", worker.name)
 		}
 		return nil
@@ -96,7 +97,7 @@ func (c *CoresService) wrapWorker() {
 			}
 			c.mountSimpleWorker(w)
 		default:
-			logging.Warnc(c.ctx, "Unknown worker type. worker: %v\n", GetFuncName(w))
+			innerlog.Logger.Warnc(c.ctx, "Unknown worker type. worker: %v\n", GetFuncName(w))
 		}
 	}
 }
@@ -127,10 +128,11 @@ func (c *CoresService) waitContext(ctx context.Context, maxWait time.Duration, f
 }
 
 func waitAllDone(stop chan error) error {
-	select {
-	case err := <-stop:
+	err := <-stop
+	if err != nil {
 		return errors.Wrap(err, "Stop")
 	}
+	return nil
 }
 
 func waitUntilTimeout(ctx context.Context, stop chan error, maxWait time.Duration) error {
@@ -146,12 +148,12 @@ func waitUntilTimeout(ctx context.Context, stop chan error, maxWait time.Duratio
 	case <-t1.C:
 	}
 
-	logging.Warnc(ctx, "context Done, The worker will wait for a maximum of %v before being forced to stop", maxWait)
+	innerlog.Logger.Warnc(ctx, "context Done, The worker will wait for a maximum of %v before being forced to stop", maxWait)
 
 	t1.Reset(maxWait)
 	select {
 	case <-t1.C:
-		logging.Warnc(ctx, "Force closing worker")
+		innerlog.Logger.Warnc(ctx, "Force closing worker")
 		return errors.Wrap(ctx.Err(), "Force close")
 	case err := <-stop:
 		return errors.Wrap(err, "Stop")

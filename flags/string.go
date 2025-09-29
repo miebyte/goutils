@@ -22,21 +22,21 @@ func (sg StringGetter) Value() string {
 
 func String(key, defaultVal, usage string) StringGetter {
 	pflag.String(key, defaultVal, usage)
-	v.SetDefault(key, defaultVal)
+	sf.SetDefault(key, defaultVal)
 	BindPFlag(key, pflag.Lookup(key))
 
 	return func() string {
-		return v.GetString(key)
+		return sf.GetString(key)
 	}
 }
 
 func StringP(key, shorthand, defaultVal, usage string) StringGetter {
 	pflag.StringP(key, shorthand, defaultVal, usage)
-	v.SetDefault(key, defaultVal)
+	sf.SetDefault(key, defaultVal)
 	BindPFlag(key, pflag.Lookup(key))
 
 	return func() string {
-		return v.GetString(key)
+		return sf.GetString(key)
 	}
 }
 

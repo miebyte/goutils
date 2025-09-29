@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -143,5 +144,59 @@ func TestPairwiseWithMixedTypes(t *testing.T) {
 				t.Errorf("Pairwise() got = %v, want %v", result, tt.expected)
 			}
 		})
+	}
+}
+
+// user 用于测试 SliceToMap，且实现 MapKeyer 接口
+type user struct {
+	ID   int
+	Name string
+}
+
+func (u user) GetKey() int {
+	return u.ID
+}
+
+func TestSliceToMap(t *testing.T) {
+	slice := []user{
+		{ID: 1, Name: "Alice"},
+		{ID: 2, Name: "Bob"},
+		{ID: 3, Name: "Carol"},
+	}
+
+	m := SliceToMap(slice)
+
+	expected := map[int]user{
+		1: {ID: 1, Name: "Alice"},
+		2: {ID: 2, Name: "Bob"},
+		3: {ID: 3, Name: "Carol"},
+	}
+
+	if !reflect.DeepEqual(m, expected) {
+		t.Errorf("SliceToMap() got = %v, want %v", m, expected)
+	}
+}
+
+// intStr 用于测试 SliceConvert，且实现 Converter[string] 接口
+type intStr struct {
+	Value int
+}
+
+func (i intStr) ConvertTo() string {
+	return "num:" + fmt.Sprint(i.Value)
+}
+
+func TestSliceConvert(t *testing.T) {
+	slice := []intStr{
+		{Value: 1},
+		{Value: 2},
+		{Value: 3},
+	}
+
+	expected := []string{"num:1", "num:2", "num:3"}
+	result := SliceConvert(slice)
+
+	if !reflect.DeepEqual(result, expected) {
+		t.Errorf("SliceConvert() got = %v, want %v", result, expected)
 	}
 }

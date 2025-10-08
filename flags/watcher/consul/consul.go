@@ -15,8 +15,8 @@ import (
 	"github.com/Masterminds/semver"
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/api/watch"
+	"github.com/miebyte/goutils/consulutils"
 	"github.com/miebyte/goutils/flags/watcher"
-	"github.com/miebyte/goutils/internal/consul"
 	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
 	"github.com/spf13/viper"
@@ -65,7 +65,7 @@ func (cw *ConsulWatcher) listPossibleTags(tag string) []string {
 func (cw *ConsulWatcher) getRemotePossiblePath(name, tag string) string {
 	var possiblePath string
 
-	kv := consul.GetConsulClient().KV()
+	kv := consulutils.GetConsulClient().KV()
 	for _, t := range cw.listPossibleTags(tag) {
 		path := fmt.Sprintf("%s/%s.yaml", cw.getServerKey(name), t)
 

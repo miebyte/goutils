@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/consul/api"
-	"github.com/miebyte/goutils/internal/consul"
+	"github.com/miebyte/goutils/consulutils"
 	"github.com/miebyte/goutils/logging"
 	"google.golang.org/grpc/resolver"
 )
@@ -94,7 +94,7 @@ func (cr *consulResolver) resolve() {
 			WaitIndex: cr.lastIndex,
 		}
 	}
-	consulclient := consul.GetConsulClient()
+	consulclient := consulutils.GetConsulClient()
 
 	cs, meta, err := consulclient.Health().Service(cr.service, cr.tag, true, opt)
 	if err != nil {

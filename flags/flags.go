@@ -15,10 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/miebyte/goutils/consulutils"
 	"github.com/miebyte/goutils/discover"
 	"github.com/miebyte/goutils/flags/reader"
 	"github.com/miebyte/goutils/flags/watcher"
-	"github.com/miebyte/goutils/internal/consul"
 	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
 	"github.com/miebyte/goutils/logging/level"
@@ -89,7 +89,7 @@ func Parse(opts ...ParseOption) {
 	}
 
 	if share.UseConsul() {
-		discover.SetFinder(consul.GetConsulClient())
+		discover.SetFinder(consulutils.GetConsulClient())
 	}
 
 	if useRemote() && config() == "" {

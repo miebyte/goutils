@@ -12,8 +12,8 @@ import (
 	"fmt"
 
 	"github.com/Masterminds/semver"
+	"github.com/miebyte/goutils/consulutils"
 	"github.com/miebyte/goutils/flags/reader"
-	"github.com/miebyte/goutils/internal/consul"
 	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
 	"github.com/pkg/errors"
@@ -58,7 +58,7 @@ func (cr *consulConfigReader) getRemotePossiblePath(name, tag string) string {
 		logging.Infof("Reading consul config from possiblePath(%s)", possiblePath)
 	}()
 
-	kv := consul.GetConsulClient().KV()
+	kv := consulutils.GetConsulClient().KV()
 	if tag == "dev" {
 		path := fmt.Sprintf("%s/%s.yaml", cr.getServerKey(name), tag)
 		pair, _, err := kv.Get(path, nil)

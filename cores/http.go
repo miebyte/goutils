@@ -17,6 +17,7 @@ import (
 
 	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/pkg/errors"
+	"github.com/rs/cors"
 )
 
 func WithHttpCORS() ServiceOption {
@@ -46,8 +47,13 @@ func (c *CoresService) listenHttp(lst net.Listener) mountFn {
 	return mountFn{
 		fn: func(ctx context.Context) (err error) {
 
+			handler := c.httpHandler
+			if c.httpCors {
+				handler = cors.AllowAll().Handler(handler)
+			}
+
 			c.httpServer = &http.Server{
-				Handler:      c.httpHandler,
+				Handler:      handler,
 				ReadTimeout:  10 * time.Second,
 				WriteTimeout: 10 * time.Second,
 				IdleTimeout:  10 * time.Second,

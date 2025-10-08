@@ -12,6 +12,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/pkg/errors v0.9.1
 	github.com/redis/go-redis/v9 v9.7.3
+	github.com/rs/cors v1.11.1
 	github.com/spf13/afero v1.12.0
 	github.com/spf13/cast v1.7.1
 	github.com/spf13/pflag v1.0.6

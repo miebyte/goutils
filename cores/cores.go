@@ -16,15 +16,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
 	"github.com/pkg/errors"
-	"github.com/soheilhy/cmux"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc"
 )
-
-type listenerGetter func() net.Listener
 
 type listenEntry interface {
 	~int | ~string
@@ -43,22 +40,14 @@ type CoresService struct {
 	serviceName string
 	tags        []string
 
-	listenAddr   string
-	listener     net.Listener
-	cmuxListener cmux.CMux
+	listenAddr string
+	listener   net.Listener
 
 	httpMux     *http.ServeMux
 	httpPattern string
 	httpHandler http.Handler
 	httpCors    bool
-
-	grpcUIEnable           bool
-	grpcServer             *grpc.Server
-	grpcServersFunc        []func(*grpc.Server)
-	grpcOptions            []grpc.ServerOption
-	grpcUnaryInterceptors  []grpc.UnaryServerInterceptor
-	grpcStreamInterceptors []grpc.StreamServerInterceptor
-	grpcSelfConn           *grpc.ClientConn
+	httpServer  *http.Server
 
 	workers     []Worker
 	mountFns    []mountFn
@@ -91,8 +80,6 @@ func NewCores(opts ...ServiceOption) *CoresService {
 		mountFns: make([]mountFn, 0),
 	}
 	cs.httpHandler = cs.httpMux
-	cs.grpcUnaryInterceptors = append(cs.grpcUnaryInterceptors, unaryServerLoggerInterceptor)
-	cs.grpcStreamInterceptors = append(cs.grpcStreamInterceptors, streamServerLoggerInterceptor)
 
 	for _, opt := range opts {
 		opt(cs)
@@ -113,31 +100,9 @@ func (c *CoresService) serve() error {
 		return c.startServer()
 	}
 
-	if len(c.grpcServersFunc) == 0 {
-		c.mountFns = append(c.mountFns, c.listenHttp(c.listener))
-	} else {
-		c.cmuxListener = cmux.New(c.listener)
-		grpcLst := c.cmuxListener.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
-		httpLst := c.cmuxListener.Match(cmux.HTTP1Fast(), cmux.HTTP2())
-
-		c.startGrpcServer()
-
-		c.mountFns = append(c.mountFns, c.listenHttp(httpLst))
-		c.mountFns = append(c.mountFns, c.listenGrpc(grpcLst))
-		c.mountFns = append(c.mountFns, c.listenCmux())
-		c.mountFns = append(c.mountFns, c.mountGRPCUI())
-	}
+	c.mountFns = append(c.mountFns, c.listenHttp(c.listener))
 
 	return c.startServer()
-}
-
-func (c *CoresService) listenCmux() mountFn {
-	return mountFn{
-		fn: func(ctx context.Context) error {
-			return c.cmuxListener.Serve()
-		},
-		name: "CmuxListener",
-	}
 }
 
 func (c *CoresService) injectServiceName() {
@@ -192,7 +157,7 @@ func Start[T listenEntry](srv *CoresService, addr T) error {
 	case string:
 		address = v
 	default:
-		logging.Errorf("unsupport address type: %T", v)
+		innerlog.Logger.Errorf("unsupport address type: %T", v)
 	}
 
 	listener, err := net.Listen("tcp", address)

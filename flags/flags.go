@@ -9,199 +9,182 @@
 package flags
 
 import (
-	"fmt"
-	"log"
 	"os"
-	"strings"
 	"time"
 
-	"github.com/miebyte/goutils/consulutils"
-	"github.com/miebyte/goutils/discover"
-	"github.com/miebyte/goutils/flags/reader"
-	"github.com/miebyte/goutils/flags/watcher"
+	"github.com/miebyte/goutils/flags/provider"
+	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
 	"github.com/miebyte/goutils/logging/level"
 	"github.com/miebyte/goutils/snail"
 	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
-
-	consulReader "github.com/miebyte/goutils/flags/reader/consul"
-	localReader "github.com/miebyte/goutils/flags/reader/local"
-	consulWatcher "github.com/miebyte/goutils/flags/watcher/consul"
-	localWatcher "github.com/miebyte/goutils/flags/watcher/local"
-)
-
-const (
-	projectNameKey = "PROJECT_NAME"
 )
 
 var (
-	v                                          = viper.New()
-	requiredFlags                              = []string{}
-	nestedKey                                  = map[string]any{}
-	defaultConfigName                          = "config"
-	defaultConfigType                          = "yaml"
-	defaultConfigReader  reader.ConfigReader   = localReader.NewLocalConfigReader()
-	defaultConfigWatcher watcher.ConfigWatcher = localWatcher.NewLocalWatcher()
+	sf                                   = New()
+	requiredFlags                        = []string{}
+	defaultConfigName                    = "config"
+	defaultConfigType                    = "json"
+	defaultConfigProvider ConfigProvider = nil
 
-	config      StringGetter
-	useRemote   BoolGetter
-	watchConfig BoolGetter
+	config StringGetter
 )
 
-func Viper() *viper.Viper {
-	return v
+type Option struct {
+	UseRemote   bool
+	WatchConfig bool
+}
+
+type OptionFunc func(*Option)
+
+func WithConfigWatch() OptionFunc {
+	return func(o *Option) {
+		o.WatchConfig = true
+	}
 }
 
 func GetServiceName() string {
 	return share.ServiceName()
 }
 
-type ParseOption func()
+// Parse is used to parse the command line arguments and the configuration file.
+// it just can be called once or it will panic.
+func Parse(opts ...OptionFunc) {
+	opt := initOption(opts...)
 
-func WithConfigType(t string) ParseOption {
-	return func() {
-		defaultConfigType = t
-	}
-}
-
-func WithConfigName(n string) ParseOption {
-	return func() {
-		defaultConfigName = n
-	}
-}
-
-func Parse(opts ...ParseOption) {
-	for _, opt := range opts {
-		opt()
-	}
-
-	initViper()
+	initSuperFlags(opt)
 	pflag.Parse()
 
-	// reset project name while specify service name by flag
-	os.Setenv(projectNameKey, share.ServiceName())
-	parseService()
+	setDebugMod()
 
-	if useRemote() {
-		share.UseConsul = func() bool { return true }
+	if opt.UseRemote {
+		if config() != "" {
+			defaultConfigProvider = provider.NewLocalProvider(config())
+		} else {
+			checkServiceName()
+			defaultConfigProvider = provider.NewConsulProvider(share.ServiceName())
+		}
+	} else {
+		configPath := config()
+		if configPath == "" {
+			configPath = sf.FindConfigFile()
+			innerlog.Logger.Debugf("find local config file: %s", configPath)
+		}
+
+		defaultConfigProvider = provider.NewLocalProvider(configPath)
 	}
 
-	if share.UseConsul() {
-		discover.SetFinder(consulutils.GetConsulClient())
-	}
+	sf.SetConfigProvider(defaultConfigProvider)
 
-	if useRemote() && config() == "" {
-		checkServiceName()
-
-		logging.Infof("Use Remote Config")
-		defaultConfigReader = consulReader.NewConsulConfigReader()
-		defaultConfigWatcher = consulWatcher.NewConsulWatcher()
-	}
-
-	if watchConfig() {
-		startWatchConfig()
-	}
-
-	readConfig()
+	readConfig(opt)
+	watchConfig(opt)
 	checkFlagKey()
 
-	if share.Debug() {
-		logging.Enable(level.LevelDebug)
-	}
+	// Check the debug configuration again, this time from the config file.
+	// If --debug is not used, it will rely on the debug setting in the config file.
+	// If --debug is used, it will take precedence.
+	setDebugMod()
 
 	snail.Init()
 }
 
-func parseService() {
-	if share.ServiceName() == "" {
-		return
-	}
-
-	segs := strings.SplitN(share.ServiceName(), ":", 2)
-	if len(segs) >= 2 {
-		share.SetServiceName(segs[0])
-		share.SetTag(segs[1])
+func setDebugMod() {
+	var lev level.Level
+	if share.Debug() {
+		lev = level.LevelDebug
 	} else {
-		share.SetTag("dev")
+		lev = level.LevelInfo
 	}
+	innerlog.Logger.Enable(lev)
+	logging.Enable(lev)
 }
 
 func checkServiceName() {
 	if share.ServiceName() == "" {
-		logging.Fatalf("ServiceName is empty, please use -s or --service to specify serviceName")
+		innerlog.Logger.Fatalf("ServiceName is empty, please use -s or --service to specify serviceName")
 	}
 }
 
-func initViper() {
-	v.AddConfigPath(".")
-	v.AddConfigPath("./configs")
-	v.AddConfigPath(os.Getenv("HOME"))
+func initOption(opts ...OptionFunc) *Option {
+	opt := &Option{}
 
-	v.SetConfigName(defaultConfigName)
-	v.SetConfigType(defaultConfigType)
+	for _, o := range opts {
+		o(opt)
+	}
 
-	share.ServiceName = StringP("serviceName", "s", os.Getenv(projectNameKey), "Set the service name.")
-	share.Debug = Bool("debug", false, "Whether to enable debug mode.")
-	config = StringP("configFile", "f", "", "Specify config file. Support json, yaml, toml.")
-	useRemote = Bool("remoteConfig", false, "True to use remote config.")
-	share.UseConsul = Bool("useConsul", false, "True to use consul to register service.")
-	watchConfig = Bool("watchConfig", false, "Set true to watch change on remote config.")
+	return opt
+}
 
-	if err := v.BindPFlags(pflag.CommandLine); err != nil {
-		fmt.Println("BindPflags error", err)
+func initSuperFlags(_ *Option) {
+	sf.AddConfigPath(".")
+	sf.AddConfigPath("./configs")
+	sf.AddConfigPath(os.Getenv("HOME"))
+
+	sf.SetConfigName(defaultConfigName)
+	sf.SetConfigType(defaultConfigType)
+	share.ServiceName = StringP("serviceName", "s", share.ServiceName(), "Set the service name.")
+	share.Debug = Bool("debug", false, "Tag Whether to enable debug mode.")
+	config = StringP("configFile", "f", "", "Specify config file. (JSON-only)")
+
+	if err := sf.BindPFlags(pflag.CommandLine); err != nil {
+		innerlog.Logger.Errorf("BindPflags error: %v", err)
 	}
 }
 
-func startWatchConfig() {
-	watchOpt := &watcher.Option{
-		ServiceName: share.ServiceName(),
-		Tag:         share.Tag(),
-		ConfigPath:  config(),
-	}
-
-	defaultConfigWatcher.WatchConfig(v, watchOpt)
+func readConfig(_ *Option) {
+	err := sf.ReadConfig()
+	innerlog.Logger.PanicError(err)
 }
 
-func readConfig() {
-	readOpt := &reader.Option{
-		ServiceName: share.ServiceName(),
-		Tag:         share.Tag(),
-		ConfigPath:  config(),
+func watchConfig(opt *Option) {
+	if !opt.WatchConfig {
+		return
 	}
 
-	err := defaultConfigReader.ReadConfig(v, readOpt)
-	if err != nil {
-		panic(err)
+	ch := sf.WatchConfig()
+	if ch == nil {
+		return
 	}
+
+	go func() {
+		for ev := range ch {
+			innerlog.Logger.Debugf("watch config change: %s, config: %v", ev.Key, ev.Config)
+			if ev.Key == "" {
+				sf.ReplaceConfig(ev.Config)
+			} else {
+				sf.ReplaceKey(ev.Key, ev.Config)
+			}
+			TriggerReload(ev.Key)
+		}
+	}()
 }
 
 func checkFlagKey() {
 	for _, rk := range requiredFlags {
-		if isZero(v.Get(rk)) {
-			log.Fatalf("Missing key: %s", rk)
+		if isZero(sf.Get(rk)) {
+			innerlog.Logger.Fatalf("Missing key: %s", rk)
 		}
 	}
 }
 
-func isZero(i interface{}) bool {
-	switch i.(type) {
+func isZero(i any) bool {
+	switch it := i.(type) {
 	case bool:
 		// It's trivial to check a bool, since it makes the flag no sense(always true).
-		return !i.(bool)
+		return !it
 	case string:
-		return i.(string) == ""
+		return it == ""
 	case time.Duration:
-		return i.(time.Duration) == 0
+		return it == 0
 	case float64:
-		return i.(float64) == 0
+		return it == 0
 	case int:
-		return i.(int) == 0
+		return it == 0
 	case []string:
-		return len(i.([]string)) == 0
-	case []interface{}:
-		return len(i.([]interface{})) == 0
+		return len(it) == 0
+	case []any:
+		return len(it) == 0
 	default:
 		return true
 	}

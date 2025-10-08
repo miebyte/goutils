@@ -8,10 +8,10 @@ import (
 
 func Duration(key string, defaultValue time.Duration, usage string) func() time.Duration {
 	pflag.Duration(key, defaultValue, usage)
-	v.SetDefault(key, defaultValue)
+	sf.SetDefault(key, defaultValue)
 	BindPFlag(key, pflag.Lookup(key))
 	return func() time.Duration {
-		return v.GetDuration(key)
+		return sf.GetDuration(key)
 	}
 }
 

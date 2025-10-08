@@ -13,15 +13,16 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
-	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/pkg/errors"
 )
 
 func WithHttpCORS() ServiceOption {
 	return func(cs *CoresService) {
 		cs.httpCors = true
-		logging.Debugf("Http enable CORS")
+		innerlog.Logger.Debugf("Http enable CORS")
 	}
 }
 
@@ -36,7 +37,7 @@ func WithHttpHandler(pattern string, handler http.Handler) ServiceOption {
 		}
 
 		cs.httpPattern = pattern
-		logging.Debugf("Registered http endpoint. path=%s\n", pattern)
+		innerlog.Logger.Debugf("Registered http endpoint. path=%s\n", pattern)
 		cs.httpMux.Handle(pattern, http.StripPrefix(strings.TrimSuffix(pattern, "/"), handler))
 	}
 }
@@ -44,12 +45,20 @@ func WithHttpHandler(pattern string, handler http.Handler) ServiceOption {
 func (c *CoresService) listenHttp(lst net.Listener) mountFn {
 	return mountFn{
 		fn: func(ctx context.Context) (err error) {
-			err = http.Serve(lst, c.httpHandler)
+
+			c.httpServer = &http.Server{
+				Handler:      c.httpHandler,
+				ReadTimeout:  10 * time.Second,
+				WriteTimeout: 10 * time.Second,
+				IdleTimeout:  10 * time.Second,
+			}
+
+			err = c.httpServer.Serve(lst)
 			if errors.Is(err, net.ErrClosed) {
-				logging.Warnc(ctx, "listener is close. %v", err)
+				innerlog.Logger.Warnc(ctx, "listener is close. %v", err)
 				return nil
 			} else if err != nil {
-				logging.Errorc(ctx, "HttpListener serve error: %v\n", err)
+				innerlog.Logger.Errorc(ctx, "HttpListener serve error: %v\n", err)
 				return err
 			}
 			return nil

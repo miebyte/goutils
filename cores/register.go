@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/miebyte/goutils/discover"
-	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/pkg/errors"
 )
 
@@ -39,11 +39,11 @@ func (c *CoresService) registerService() mountFn {
 
 			err := discover.GetServiceFinder().RegisterServiceWithTags(c.serviceName, registerAddr, c.tags)
 			if err != nil {
-				logging.Errorc(ctx, "Register service(%s) failed. error: %v", registerAddr, err)
+				innerlog.Logger.Errorc(ctx, "Register service(%s) failed. error: %v", registerAddr, err)
 				return errors.Wrap(err, "registerService")
 			}
 
-			logging.Infoc(ctx, "Register service(%s) to addr(%s) success", c.serviceName, registerAddr)
+			innerlog.Logger.Infoc(ctx, "Register service(%s) to addr(%s) success", c.serviceName, registerAddr)
 
 			// Wait for terminate
 			<-ctx.Done()

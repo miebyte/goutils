@@ -12,27 +12,23 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/internal/innerlog"
 )
 
 func (c *CoresService) welcome() {
 	if c.listener != nil {
-		logging.Infof("Listening... Addr=%v\n", c.listener.Addr().String())
+		innerlog.Logger.Infof("Listening... Addr=%v\n", c.listener.Addr().String())
 	}
 
 	if c.httpPattern != "" {
 		_, port, _ := net.SplitHostPort(c.listenAddr)
 		target := fmt.Sprintf("127.0.0.1:%s", port)
-		logging.Infof("HttpHandler enabled. URL=%s\n", fmt.Sprintf("http://%s%s", target, c.httpPattern))
-	}
-
-	if c.grpcUIEnable {
-		logging.Infoc(c.ctx, "GRPCUI enabled. URL=%s", fmt.Sprintf("http://%s%s", c.grpcSelfConn.Target(), grpcuiUrl))
+		innerlog.Logger.Infof("HttpHandler enabled. URL=%s\n", fmt.Sprintf("http://%s%s", target, c.httpPattern))
 	}
 
 	if c.serviceName != "" {
-		logging.Infof("Service: %s Tags: %v Started.\n", c.serviceName, c.tags)
+		innerlog.Logger.Infof("Service: %s Tags: %v Started.\n", c.serviceName, c.tags)
 	} else {
-		logging.Infof("Service Started.")
+		innerlog.Logger.Infof("Service Started.")
 	}
 }

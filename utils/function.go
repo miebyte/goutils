@@ -8,7 +8,10 @@
 
 package utils
 
-import "iter"
+import (
+	"iter"
+	"slices"
+)
 
 // Map applies a function to each element in a slice and returns a new slice
 func Map[T any, U any](arr []T, fn func(T) U) []U {
@@ -41,12 +44,7 @@ func Filter[T any](arr []T, predicate func(T) bool) []T {
 
 // Any checks if any element in the slice satisfies the predicate function
 func Any[T any](arr []T, predicate func(T) bool) bool {
-	for _, v := range arr {
-		if predicate(v) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(arr, predicate)
 }
 
 // All checks if all elements in the slice satisfy the predicate function
@@ -82,14 +80,12 @@ func GroupBy[T any, K comparable](arr []T, keyFunc func(T) K) map[K][]T {
 
 // Zip combines two slices into a slice of pairs (tuples)
 func Zip[T1 any, T2 any](arr1 []T1, arr2 []T2) [][2]any {
-	length := len(arr1)
-	if len(arr2) < length {
-		length = len(arr2)
-	}
+	length := min(len(arr1), len(arr2))
 	result := make([][2]any, length)
-	for i := 0; i < length; i++ {
+	for i := range length {
 		result[i] = [2]any{arr1[i], arr2[i]}
 	}
+
 	return result
 }
 
@@ -141,12 +137,8 @@ func FilterIter[inputs ~[]E, E any](arr inputs, fn func(E) bool) iter.Seq[E] {
 
 func ZipIter[T1 any, T2 any, E [2]any](arr1 []T1, arrs []T2) iter.Seq[E] {
 	return func(yield func(E) bool) {
-		length := len(arr1)
-		if len(arrs) < length {
-			length = len(arrs)
-		}
-
-		for i := 0; i < length; i++ {
+		length := min(len(arr1), len(arrs))
+		for i := range length {
 			zipped := [2]any{arr1[i], arrs[i]}
 			if !yield(zipped) {
 				return

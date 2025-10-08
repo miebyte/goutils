@@ -14,10 +14,10 @@ func (sg StringSliceGetter) Value() []string {
 
 func StringSlice(key string, defaultVal []string, usage string) StringSliceGetter {
 	pflag.StringSlice(key, defaultVal, usage)
-	v.SetDefault(key, defaultVal)
+	sf.SetDefault(key, defaultVal)
 	BindPFlag(key, pflag.Lookup(key))
 
 	return func() []string {
-		return v.GetStringSlice(key)
+		return sf.GetStringSlice(key)
 	}
 }

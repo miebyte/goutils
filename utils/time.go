@@ -8,7 +8,10 @@
 
 package utils
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // BeginOfMinute return beginning minute time of day.
 func BeginOfMinute(t time.Time) time.Time {
@@ -134,4 +137,54 @@ func StartEndWeek() (start, end time.Time) {
 func StartEndMonth() (start, end time.Time) {
 	now := time.Now()
 	return BeginOfMonth(now), EndOfMonth(now)
+}
+
+// Use the long enough past time as start time, in case timex.Now() - lastTime equals 0.
+var initTime = time.Now().AddDate(-1, -1, -1)
+
+// Now returns a relative time duration since initTime, which is not important.
+// The caller only needs to care about the relative value.
+func Now() time.Duration {
+	return time.Since(initTime)
+}
+
+// Since returns a diff since given d.
+func Since(d time.Duration) time.Duration {
+	return time.Since(initTime) - d
+}
+
+// An AtomicDuration is an implementation of atomic duration.
+type AtomicDuration int64
+
+// NewAtomicDuration returns an AtomicDuration.
+func NewAtomicDuration() *AtomicDuration {
+	return new(AtomicDuration)
+}
+
+// ForAtomicDuration returns an AtomicDuration with given value.
+func ForAtomicDuration(val time.Duration) *AtomicDuration {
+	d := NewAtomicDuration()
+	d.Set(val)
+	return d
+}
+
+// CompareAndSwap compares current value with old, if equals, set the value to val.
+func (d *AtomicDuration) CompareAndSwap(old, val time.Duration) bool {
+	return atomic.CompareAndSwapInt64((*int64)(d), int64(old), int64(val))
+}
+
+// Load loads the current duration.
+func (d *AtomicDuration) Load() time.Duration {
+	return time.Duration(atomic.LoadInt64((*int64)(d)))
+}
+
+// Set sets the value to val.
+func (d *AtomicDuration) Set(val time.Duration) {
+	atomic.StoreInt64((*int64)(d), int64(val))
+}
+
+func FuncDuration(fn func()) time.Duration {
+	start := time.Now()
+	fn()
+	return time.Since(start)
 }

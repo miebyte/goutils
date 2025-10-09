@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/internal/innerlog"
 )
 
 type HashData interface {
@@ -81,7 +81,7 @@ func (r *LocalRepos[T]) Start(ctx context.Context) {
 func (r *LocalRepos[T]) reloadEntries(ctx context.Context) {
 	iter, err := r.dataStore(ctx)
 	if err != nil {
-		logging.Errorc(ctx, "reloadEntries error: %v", err)
+		innerlog.Logger.Errorc(ctx, "reloadEntries error: %v", err)
 		return
 	}
 

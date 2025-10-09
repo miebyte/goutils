@@ -17,7 +17,7 @@ import (
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
 	"github.com/miebyte/goutils/errorutils"
-	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/internal/innerlog"
 )
 
 var (
@@ -63,7 +63,7 @@ func bindAndValidate[Q any](c *gin.Context) (*Q, error) {
 	requestPtr := new(Q)
 
 	if err := ParseRequestParams(c, requestPtr); err != nil {
-		logging.Errorc(c, "parse request params failed: %v", err)
+		innerlog.Logger.Errorc(c, "parse request params failed: %v", err)
 		return nil, err
 	}
 
@@ -173,7 +173,7 @@ func parseError(c *gin.Context, err error) {
 	}
 
 	c.JSON(httpCode, ErrorRet(errCode, message))
-	logging.Errorf("handle request: %s error: %v", c.Request.URL.Path, err)
+	innerlog.Logger.Errorf("handle request: %s error: %v", c.Request.URL.Path, err)
 }
 
 type requestWithErrorHandler[Q any] func(c *gin.Context, req *Q) (err error)
@@ -184,7 +184,7 @@ func RequestWithErrorHandler[Q any](fn requestWithErrorHandler[Q]) gin.HandlerFu
 		var err error
 
 		if err = ParseRequestParams(c, requestPtr); err != nil {
-			logging.Errorc(c, "parse request params failed: %v", err)
+			innerlog.Logger.Errorc(c, "parse request params failed: %v", err)
 			c.JSON(http.StatusBadRequest, ErrorRet(http.StatusBadRequest, err.Error()))
 			return
 		}

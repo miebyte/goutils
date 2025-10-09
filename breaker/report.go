@@ -8,7 +8,7 @@ import (
 
 	"github.com/miebyte/goutils/debounce"
 	"github.com/miebyte/goutils/internal/buildinfo"
-	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/internal/innerlog"
 )
 
 var (
@@ -32,7 +32,7 @@ func Report(msg string) {
 			builder.WriteString(fmt.Sprintf("dropped: %d\n", dp))
 		}
 		builder.WriteString(strings.TrimSpace(msg))
-		logging.Error(builder.String())
+		innerlog.Logger.Error(builder.String())
 	})
 	if !reported {
 		atomic.AddInt32(&dropped, 1)

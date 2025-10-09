@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/consul/api"
+	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/miebyte/goutils/internal/share"
-	"github.com/miebyte/goutils/logging"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/singleflight"
 	"gopkg.in/mgo.v2/bson"
@@ -74,8 +74,7 @@ func getConsulHostFromEnv() string {
 
 func setShareConsulAddr(host string) {
 	share.ConsulAddr = func() string { return fmt.Sprintf("%s:8500", host) }
-
-	fmt.Println("Consul Addr:", share.ConsulAddr())
+	innerlog.Logger.Debugf("ConsulAddr set to ", share.ConsulAddr())
 }
 
 func GetConsulAddress() string {
@@ -85,7 +84,7 @@ func GetConsulAddress() string {
 func GetConsulClient() *Client {
 	once.Do(func() {
 		defaultConsulClient = newConsulClient(GetConsulAddress())
-		logging.Debugf("ConsulAddr: %v", GetConsulAddress())
+		innerlog.Logger.Debugf("ConsulAddr: %v", GetConsulAddress())
 	})
 
 	return defaultConsulClient
@@ -97,7 +96,7 @@ func newConsulClient(address string) *Client {
 	config.Address = address
 	client, err := api.NewClient(config)
 	if err != nil {
-		logging.Errorf("Failed to connect to consul. err: %v", err)
+		innerlog.Logger.Errorf("Failed to connect to consul. err: %v", err)
 	}
 	return &Client{
 		Client: client,
@@ -173,7 +172,7 @@ func (c *Client) GetAddressWithTag(service string, tag string) string {
 	}
 	addr := cs[0]
 
-	logging.Debugf("Find %s address in consul. Addr=%s", strings.Join([]string{service, tag}, ":"), addr)
+	innerlog.Logger.Debugf("Find %s address in consul. Addr=%s", strings.Join([]string{service, tag}, ":"), addr)
 	return addr
 }
 
@@ -184,7 +183,7 @@ func (c *Client) GetAllAddress(service string) []string {
 func (c *Client) GetAllAddressWithTag(service string, tag string) []string {
 	entries, err := c.findInConsul(service, tag)
 	if err != nil || len(entries) == 0 {
-		logging.Errorf("Failed to find %s:%s in consul.", service, tag)
+		innerlog.Logger.Errorf("Failed to find %s:%s in consul.", service, tag)
 		return nil
 	}
 
@@ -262,9 +261,9 @@ func (c *Client) deregisterServiceAndCheck(serviceID, checkID string) (reterr er
 func (c *Client) Close() {
 	for _, r := range c.services {
 		if err := c.deregisterServiceAndCheck(r.ServiceID, r.CheckID); err != nil {
-			logging.Errorf("Deregister service %v error: %v", r.ServiceID, err)
+			innerlog.Logger.Errorf("Deregister service %v error: %v", r.ServiceID, err)
 		} else {
-			logging.Infof("Deregistered service: %v success", r.ServiceID)
+			innerlog.Logger.Infof("Deregistered service: %v success", r.ServiceID)
 		}
 	}
 }

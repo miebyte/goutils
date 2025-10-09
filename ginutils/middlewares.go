@@ -47,7 +47,7 @@ func LoggingRequest(header bool) gin.HandlerFunc {
 		if header {
 			fields["header"] = c.Request.Header
 		}
-		logging.Infoc(ctx, "incoming http request: %+v", fields)
+		Logger.Infoc(ctx, "incoming http request: %+v", fields)
 		c.Next()
 	}
 }

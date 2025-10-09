@@ -37,8 +37,9 @@ type CoresService struct {
 	ctx    context.Context
 	cancel func()
 
-	serviceName string
-	tags        []string
+	serviceName  string
+	tags         []string
+	needRegister bool
 
 	listenAddr string
 	listener   net.Listener
@@ -70,6 +71,12 @@ func WithWaitAllDone() ServiceOption {
 	}
 }
 
+func WithRegisterService() ServiceOption {
+	return func(cs *CoresService) {
+		cs.needRegister = true
+	}
+}
+
 func NewCores(opts ...ServiceOption) *CoresService {
 	ctx, cancel := context.WithCancel(context.TODO())
 
@@ -91,9 +98,9 @@ func NewCores(opts ...ServiceOption) *CoresService {
 func (c *CoresService) serve() error {
 	c.injectServiceName()
 
-	c.mountFns = []mountFn{
-		c.gracefulKill(),
-		c.registerService(),
+	c.mountFns = []mountFn{c.gracefulKill()}
+	if c.needRegister {
+		c.mountFns = append(c.mountFns, c.registerService())
 	}
 
 	if c.listener == nil {

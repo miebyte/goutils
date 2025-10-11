@@ -44,7 +44,7 @@ var (
 )
 
 func main() {
-	flags.Parse(flags.WithConfigWatch())
+	flags.Parse()
 
 	conf := new(Config)
 	logging.PanicError(configFlag(conf))
@@ -68,6 +68,7 @@ func main() {
 
 	srv := cores.NewCores(
 		cores.WithPprof(),
+		cores.WithRegisterService(),
 		cores.WithHttpHandler("/", app),
 		cores.WithWorker(func(ctx context.Context) error {
 			ticket := time.NewTicker(time.Second * 3)

@@ -62,7 +62,7 @@ func (p *ConsulProvider) getRemotePossiblePath(name, tag string) string {
 
 	kv := consulutils.GetConsulClient().KV()
 	if tag == "dev" {
-		path := fmt.Sprintf("%s/%s.yaml", p.getServerKey(name), tag)
+		path := fmt.Sprintf("%s/%s.json", p.getServerKey(name), tag)
 		pair, _, err := kv.Get(path, nil)
 		if err == nil && pair != nil {
 			possiblePath = path
@@ -71,7 +71,7 @@ func (p *ConsulProvider) getRemotePossiblePath(name, tag string) string {
 	}
 
 	for _, t := range p.listPossibleTags(tag) {
-		path := fmt.Sprintf("%s/%s.yaml", p.getServerKey(name), t)
+		path := fmt.Sprintf("%s/%s.json", p.getServerKey(name), t)
 
 		pair, _, err := kv.Get(path, nil)
 		if err == nil && pair != nil {
@@ -113,13 +113,13 @@ func (p *ConsulProvider) WatchConfig() <-chan Event {
 	ch := make(chan Event)
 
 	key := p.getRemotePossiblePath(p.serviceName, p.tag)
-	plan, err := watch.Parse(map[string]interface{}{"type": "key", "key": key})
+	plan, err := watch.Parse(map[string]any{"type": "key", "key": key})
 	innerlog.Logger.PanicError(err)
 
 	first := true
 	var currentVal []byte
 
-	plan.Handler = func(index uint64, data interface{}) {
+	plan.Handler = func(index uint64, data any) {
 		kv, ok := (data).(*api.KVPair)
 		if !ok {
 			innerlog.Logger.Errorf("Failed to watch remote config data.")

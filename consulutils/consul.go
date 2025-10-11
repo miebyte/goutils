@@ -74,7 +74,7 @@ func getConsulHostFromEnv() string {
 
 func setShareConsulAddr(host string) {
 	share.ConsulAddr = func() string { return fmt.Sprintf("%s:8500", host) }
-	innerlog.Logger.Debugf("ConsulAddr set to ", share.ConsulAddr())
+	innerlog.Logger.Debugf("ConsulAddr set to %v", share.ConsulAddr())
 }
 
 func GetConsulAddress() string {

@@ -10,6 +10,8 @@ package discover
 
 import (
 	"sync"
+
+	"github.com/miebyte/goutils/consulutils"
 )
 
 type Service struct {
@@ -49,6 +51,13 @@ func SetFinder(finder ServiceFinder) {
 	finderMutex.Lock()
 	defer finderMutex.Unlock()
 	defaultServiceFinder = finder
+}
+
+func SetConsulFinder() {
+	finderMutex.Lock()
+	defer finderMutex.Unlock()
+
+	defaultServiceFinder = consulutils.GetConsulClient()
 }
 
 func GetAddress(srv string) string {

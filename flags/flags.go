@@ -12,6 +12,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/miebyte/goutils/discover"
 	"github.com/miebyte/goutils/flags/provider"
 	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/miebyte/goutils/internal/share"
@@ -32,15 +33,21 @@ var (
 )
 
 type Option struct {
-	UseRemote   bool
-	WatchConfig bool
+	UseRemote   BoolGetter
+	WatchConfig BoolGetter
 }
 
-type OptionFunc func(*Option)
+type OptionFunc func(opt *Option)
 
 func WithConfigWatch() OptionFunc {
-	return func(o *Option) {
-		o.WatchConfig = true
+	return func(opt *Option) {
+		opt.WatchConfig = func() bool { return true }
+	}
+}
+
+func WithUseRemote() OptionFunc {
+	return func(opt *Option) {
+		opt.UseRemote = func() bool { return true }
 	}
 }
 
@@ -58,12 +65,13 @@ func Parse(opts ...OptionFunc) {
 
 	setDebugMod()
 
-	if opt.UseRemote {
+	if opt.UseRemote() {
 		if config() != "" {
 			defaultConfigProvider = provider.NewLocalProvider(config())
 		} else {
 			checkServiceName()
 			defaultConfigProvider = provider.NewConsulProvider(share.ServiceName())
+			discover.SetConsulFinder()
 		}
 	} else {
 		configPath := config()
@@ -116,7 +124,7 @@ func initOption(opts ...OptionFunc) *Option {
 	return opt
 }
 
-func initSuperFlags(_ *Option) {
+func initSuperFlags(opt *Option) {
 	sf.AddConfigPath(".")
 	sf.AddConfigPath("./configs")
 	sf.AddConfigPath(os.Getenv("HOME"))
@@ -124,7 +132,9 @@ func initSuperFlags(_ *Option) {
 	sf.SetConfigName(defaultConfigName)
 	sf.SetConfigType(defaultConfigType)
 	share.ServiceName = StringP("serviceName", "s", share.ServiceName(), "Set the service name.")
-	share.Debug = Bool("debug", false, "Tag Whether to enable debug mode.")
+	share.Debug = Bool("debug", false, "Tag whether to enable debug mode.")
+	opt.UseRemote = Bool("useRemote", false, "Tag whether to use remote config")
+	opt.WatchConfig = Bool("watchConfig", false, "Tag whether to watch config")
 	config = StringP("configFile", "f", "", "Specify config file. (JSON-only)")
 
 	if err := sf.BindPFlags(pflag.CommandLine); err != nil {
@@ -138,7 +148,7 @@ func readConfig(_ *Option) {
 }
 
 func watchConfig(opt *Option) {
-	if !opt.WatchConfig {
+	if !opt.WatchConfig() {
 		return
 	}
 

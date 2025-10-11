@@ -39,11 +39,11 @@ func (c *CoresService) registerService() mountFn {
 
 			err := discover.GetServiceFinder().RegisterServiceWithTags(c.serviceName, registerAddr, c.tags)
 			if err != nil {
-				innerlog.Logger.Errorc(ctx, "Register service(%s) failed. error: %v", registerAddr, err)
+				innerlog.Logger.Errorc(ctx, "Register service(%s) failed. error: %v", c.serviceName, err)
 				return errors.Wrap(err, "registerService")
 			}
 
-			innerlog.Logger.Infoc(ctx, "Register service(%s) to addr(%s) success", c.serviceName, registerAddr)
+			innerlog.Logger.Infoc(ctx, "Register service(%s) success", c.serviceName)
 
 			// Wait for terminate
 			<-ctx.Done()

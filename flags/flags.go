@@ -132,6 +132,7 @@ func initSuperFlags(opt *Option) {
 	sf.SetConfigName(defaultConfigName)
 	sf.SetConfigType(defaultConfigType)
 	share.ServiceName = StringP("serviceName", "s", share.ServiceName(), "Set the service name.")
+	share.Tag = StringP("serviceTag", "t", share.Tag(), "Set the service tag.")
 	share.Debug = Bool("debug", false, "Tag whether to enable debug mode.")
 	opt.UseRemote = Bool("useRemote", false, "Tag whether to use remote config")
 	opt.WatchConfig = Bool("watchConfig", false, "Tag whether to watch config")

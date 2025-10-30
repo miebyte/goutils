@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/miebyte/goutils/discover"
-	"github.com/pkg/errors"
 )
 
 type RedisConfig struct {
@@ -48,8 +47,6 @@ func (conf *RedisConfig) SetDefault() {
 	}
 }
 
-type RedisPool map[string]*RedisClient
-
 type RedisConfigMap map[string]*RedisConfig
 
 func (rc RedisConfigMap) DialGoRedisClient(names ...string) (*RedisClient, error) {
@@ -66,36 +63,16 @@ func (rc RedisConfigMap) DialGoRedisClient(names ...string) (*RedisClient, error
 	return conf.DialGORedisClient()
 }
 
-func (rc RedisConfigMap) DialGoRedisPool() (RedisPool, error) {
-	rp := make(map[string]*RedisClient)
-
-	for name := range rc {
-		client, err := rc.DialGoRedisClient(name)
-		if err != nil {
-			return nil, errors.Wrapf(err, "dial redisPool of %s", name)
-		}
-
-		rp[name] = client
+// Deprecated: 当前方法已废弃并将在后续版本移除, 请使用 NewRedisPool 替代
+func (rc RedisConfigMap) DialGoRedisPool(opts ...redisPoolOptionsFunc) (RedisPool, error) {
+	rp, err := NewRedisPool(rc, opts...)
+	if err != nil {
+		return RedisPool{}, err
 	}
 
-	return rp, nil
+	return *rp, nil
 }
 
-func (rp RedisPool) GetRedis(names ...string) (*RedisClient, error) {
-	name := "default"
-	if len(names) != 0 {
-		name = names[0]
-	}
-
-	c, exists := rp[name]
-	if !exists {
-		return nil, errors.Errorf("redis(%s) not init", name)
-	}
-	return c, nil
-}
-
-func (rp RedisPool) Close() {
-	for _, client := range rp {
-		_ = client.Close()
-	}
+func (rc RedisConfigMap) NewRedisPool(opts ...redisPoolOptionsFunc) (*RedisPool, error) {
+	return NewRedisPool(rc, opts...)
 }

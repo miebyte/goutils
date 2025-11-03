@@ -9,8 +9,11 @@
 package emailutils
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
+	"mime"
+	"net/mail"
 	"net/smtp"
 )
 
@@ -28,33 +31,56 @@ func NewEmailClient(config *EmailConfig) *EmailClient {
 
 // Send 发送邮件
 func (c *EmailClient) Send(to, subject, body string) error {
-	from := c.config.From
-	if c.config.FromName != "" {
-		from = fmt.Sprintf("%s <%s>", c.config.FromName, c.config.From)
+	// 构建发件人地址
+	fromAddr := &mail.Address{
+		Name:    c.config.FromName,
+		Address: c.config.From,
+	}
+
+	// 构建收件人地址
+	toAddr, err := mail.ParseAddress(to)
+	if err != nil {
+		return fmt.Errorf("invalid recipient address: %w", err)
+	}
+
+	// 构建邮件消息
+	msg, err := c.buildMessage(fromAddr, toAddr, subject, body)
+	if err != nil {
+		return fmt.Errorf("failed to build message: %w", err)
 	}
 
 	addr := fmt.Sprintf("%s:%d", c.config.Host, c.config.Port)
-
 	auth := smtp.PlainAuth("", c.config.Username, c.config.Password, c.config.Host)
 
-	msg := []byte(fmt.Sprintf("To: %s\r\n"+
-		"From: %s\r\n"+
-		"Subject: %s\r\n"+
-		"MIME-Version: 1.0\r\n"+
-		"Content-Type: text/html; charset=UTF-8\r\n"+
-		"\r\n"+
-		"%s\r\n", to, from, subject, body))
-
-	var err error
 	if c.config.Port == 465 {
 		// SSL连接
-		err = c.sendEmailTLS(addr, auth, from, []string{to}, msg)
-	} else {
-		// 普通连接或STARTTLS
-		err = smtp.SendMail(addr, auth, c.config.From, []string{to}, msg)
+		return c.sendEmailTLS(addr, auth, c.config.From, []string{to}, msg)
 	}
 
-	return err
+	// 普通连接或STARTTLS
+	return smtp.SendMail(addr, auth, c.config.From, []string{to}, msg)
+}
+
+// buildMessage 构建邮件消息
+func (c *EmailClient) buildMessage(from, to *mail.Address, subject, body string) ([]byte, error) {
+	var buf bytes.Buffer
+
+	// 编码主题（支持非ASCII字符）
+	encodedSubject := mime.QEncoding.Encode("UTF-8", subject)
+
+	// 写入邮件头
+	buf.WriteString(fmt.Sprintf("From: %s\r\n", from.String()))
+	buf.WriteString(fmt.Sprintf("To: %s\r\n", to.String()))
+	buf.WriteString(fmt.Sprintf("Subject: %s\r\n", encodedSubject))
+	buf.WriteString("MIME-Version: 1.0\r\n")
+	buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	buf.WriteString("Content-Transfer-Encoding: 8bit\r\n")
+	buf.WriteString("\r\n")
+
+	// 写入邮件正文
+	buf.WriteString(body)
+
+	return buf.Bytes(), nil
 }
 
 // sendEmailTLS 使用TLS发送邮件（用于465端口）

@@ -6,12 +6,13 @@ import (
 	"strconv"
 
 	"github.com/miebyte/goutils/emailutils"
+	"github.com/miebyte/goutils/logging"
 	"github.com/miebyte/goutils/utils"
 )
 
 func main() {
 	// 从环境变量读取配置，如果没有设置则使用默认值
-	port, err := strconv.Atoi(utils.GetEnvByDefualt("SMTP_PORT", "587"))
+	port, err := strconv.Atoi(utils.GetEnvByDefualt("SMTP_PORT", "465"))
 	if err != nil {
 		log.Fatalf("Invalid SMTP_PORT: %v", err)
 	}
@@ -25,11 +26,13 @@ func main() {
 		FromName: utils.GetEnvByDefualt("SMTP_FROM_NAME", "系统通知"),
 	}
 
+	logging.Infof("emailConfig: %v", logging.Jsonify(emailConfig))
+
 	// 创建邮件客户端
 	emailClient := emailutils.NewEmailClient(emailConfig)
 
 	// 发送邮件
-	to := "user@example.com"
+	to := "269085434@qq.com"
 	subject := "测试邮件"
 	body := `
 		<!DOCTYPE html>

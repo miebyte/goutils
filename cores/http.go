@@ -37,7 +37,7 @@ func WithHttpHandler(pattern string, handler http.Handler) ServiceOption {
 			pattern = pattern + "/"
 		}
 
-		cs.httpPattern = pattern
+		cs.httpPatterns = append(cs.httpPatterns, pattern)
 		innerlog.Logger.Debugf("Registered http endpoint. path=%s\n", pattern)
 		cs.httpMux.Handle(pattern, http.StripPrefix(strings.TrimSuffix(pattern, "/"), handler))
 	}

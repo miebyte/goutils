@@ -45,11 +45,11 @@ type CoresService struct {
 	listenAddr string
 	listener   net.Listener
 
-	httpMux     *http.ServeMux
-	httpPattern string
-	httpHandler http.Handler
-	httpCors    bool
-	httpServer  *http.Server
+	httpMux      *http.ServeMux
+	httpPatterns []string
+	httpHandler  http.Handler
+	httpCors     bool
+	httpServer   *http.Server
 
 	workers     []Worker
 	mountFns    []mountFn
@@ -82,10 +82,11 @@ func NewCores(opts ...ServiceOption) *CoresService {
 	ctx, cancel := context.WithCancel(context.TODO())
 
 	cs := &CoresService{
-		ctx:      ctx,
-		cancel:   cancel,
-		httpMux:  http.NewServeMux(),
-		mountFns: make([]mountFn, 0),
+		ctx:          ctx,
+		cancel:       cancel,
+		httpMux:      http.NewServeMux(),
+		httpPatterns: make([]string, 0),
+		mountFns:     make([]mountFn, 0),
 	}
 	cs.httpHandler = cs.httpMux
 

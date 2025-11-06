@@ -20,10 +20,13 @@ func (c *CoresService) welcome() {
 		innerlog.Logger.Infof("Listening... Addr=%v\n", c.listener.Addr().String())
 	}
 
-	if c.httpPattern != "" {
+	if len(c.httpPatterns) != 0 {
 		_, port, _ := net.SplitHostPort(c.listenAddr)
 		target := fmt.Sprintf("127.0.0.1:%s", port)
-		innerlog.Logger.Infof("HttpHandler enabled. URL=%s\n", fmt.Sprintf("http://%s%s", target, c.httpPattern))
+
+		for _, httpPattern := range c.httpPatterns {
+			innerlog.Logger.Infof("HttpHandler enabled. URL=%s\n", fmt.Sprintf("http://%s%s", target, httpPattern))
+		}
 	}
 
 	if c.serviceName != "" {

@@ -18,6 +18,7 @@ type PrettyLogger struct {
 
 	level     level.Level
 	mu        MutexWrap
+	hooksMu   RWMutexWrap
 	hooks     LevelHook
 	entryPool sync.Pool
 }
@@ -27,6 +28,12 @@ type PrettyLoggerOption func(*PrettyLogger)
 func WithModule(n string) PrettyLoggerOption {
 	return func(pl *PrettyLogger) {
 		pl.module = n
+	}
+}
+
+func WithEnableSource(b bool) PrettyLoggerOption {
+	return func(pl *PrettyLogger) {
+		pl.WithSource = b
 	}
 }
 
@@ -60,9 +67,10 @@ func (l *PrettyLogger) newEntry() *Entry {
 
 func (l *PrettyLogger) releaseEntry(entry *Entry) {
 	entry.Data = map[string]any{}
-	entry.Caller = nil
 	entry.Buffer = nil
 	entry.Ctx = nil
+	entry.Source = ""
+
 	l.entryPool.Put(entry)
 }
 

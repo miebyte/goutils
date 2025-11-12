@@ -116,7 +116,3 @@ func PanicError(err error, v ...any) {
 	logger.Error(s)
 	panic(s)
 }
-
-func AddGlobalHook(hook Hook) {
-	logger.AddHook(hook)
-}

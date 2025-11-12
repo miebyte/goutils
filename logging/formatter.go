@@ -113,17 +113,8 @@ func (f *TextFormatter) formatStandard(buf *bytes.Buffer, e *Entry) {
 	buf.WriteString(" | ")
 
 	// SOURCE
-	var source string
-	if e.Caller != nil {
-		pkg := getPackageName(e.Caller.Function)
-		file := filepath.Base(e.Caller.File)
-		if pkg != "" {
-			source = pkg + "/" + file
-		} else {
-			source = file
-		}
-		source = fmt.Sprintf("%s:%d", source, e.Caller.Line)
-		buf.WriteString(source)
+	if e.Logger.WithSource {
+		buf.WriteString(e.Source)
 		buf.WriteString(" | ")
 	}
 
@@ -168,11 +159,8 @@ func (f *TextFormatter) formatCompact(buf *bytes.Buffer, e *Entry) {
 	}
 
 	// SOURCE
-	if e.Caller != nil {
-		file := filepath.Base(e.Caller.File)
-		buf.WriteString(file)
-		buf.WriteString(":")
-		buf.WriteString(strconv.Itoa(e.Caller.Line))
+	if e.Logger.WithSource {
+		buf.WriteString(filepath.Base(e.Source))
 		buf.WriteString(" ")
 	}
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ var (
 const (
 	maximumCallerDepth int = 25
 	defaultFrames      int = 4
+	sourceContextKey       = "go-utils:source:key"
 )
 
 type Fields map[string]any
@@ -40,7 +42,7 @@ type Entry struct {
 	Data    Fields
 	Time    time.Time
 	Level   level.Level
-	Caller  *runtime.Frame
+	Source  string
 	Buffer  *bytes.Buffer
 }
 
@@ -52,17 +54,22 @@ func NewEntry(logger *PrettyLogger) *Entry {
 }
 
 func (entry *Entry) fireHooks() {
-	entry.Logger.mu.Lock()
+	err := FireGlobalHook(entry.Level, entry)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to fire hook: %v\n", err)
+	}
+
+	entry.Logger.hooksMu.RLock()
 	if entry.Logger.hooks.IsEmpty() {
-		entry.Logger.mu.Unlock()
+		entry.Logger.hooksMu.RUnlock()
 		return
 	}
 
 	tmpHooks := make(LevelHook, len(entry.Logger.hooks))
 	maps.Copy(tmpHooks, entry.Logger.hooks)
-	entry.Logger.mu.Unlock()
+	entry.Logger.hooksMu.RUnlock()
 
-	err := tmpHooks.Fire(entry.Level, entry)
+	err = tmpHooks.Fire(entry.Level, entry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to fire hook: %v\n", err)
 	}
@@ -100,18 +107,37 @@ func (entry *Entry) Log(lev level.Level, msg string) {
 	entry.Time = time.Now()
 	entry.Level = lev
 	entry.Message = msg
-	if entry.Logger.WithSource {
-		entry.Caller = getCaller()
-	}
 
 	if entry.Ctx != nil {
 		entry.Data = GetContextFields(entry.Ctx)
 	} else {
 		entry.Ctx = context.TODO()
 	}
+
+	if entry.Logger.WithSource {
+		entry.parseSource()
+	}
+
 	entry.fireHooks()
 
 	entry.log()
+}
+
+func (entry *Entry) parseSource() {
+	value := entry.Ctx.Value(sourceContextKey)
+	specifySource, ok := value.(string)
+	if ok {
+		entry.Source = specifySource
+		return
+	}
+
+	caller := getCaller()
+	pkg := getPackageName(caller.Function)
+	if pkg != "" {
+		entry.Source = fmt.Sprintf("%s/%s:%d", pkg, filepath.Base(caller.File), caller.Line)
+	} else {
+		entry.Source = fmt.Sprintf("%s:%d", filepath.Base(caller.File), caller.Line)
+	}
 }
 
 func getPackageName(f string) string {
@@ -157,6 +183,10 @@ func getCaller() *runtime.Frame {
 	}
 
 	return nil
+}
+
+func WithSpecifySource(ctx context.Context, source string) context.Context {
+	return context.WithValue(ctx, sourceContextKey, source)
 }
 
 func (entry *Entry) FieldsKVPairs() []any {

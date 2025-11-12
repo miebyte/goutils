@@ -30,3 +30,36 @@ func (mw *MutexWrap) Unlock() {
 func (mw *MutexWrap) Disable() {
 	mw.disabled = true
 }
+
+type RWMutexWrap struct {
+	lock     sync.RWMutex
+	disabled bool
+}
+
+func (mw *RWMutexWrap) Lock() {
+	if !mw.disabled {
+		mw.lock.Lock()
+	}
+}
+
+func (mw *RWMutexWrap) Unlock() {
+	if !mw.disabled {
+		mw.lock.Unlock()
+	}
+}
+
+func (mw *RWMutexWrap) RLock() {
+	if !mw.disabled {
+		mw.lock.RLock()
+	}
+}
+
+func (mw *RWMutexWrap) RUnlock() {
+	if !mw.disabled {
+		mw.lock.RUnlock()
+	}
+}
+
+func (mw *RWMutexWrap) Disable() {
+	mw.disabled = true
+}

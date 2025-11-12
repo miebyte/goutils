@@ -25,10 +25,7 @@ var (
 )
 
 func init() {
-	GormLogger = NewGormLogger(
-		WithSlowThreshold(time.Second * 10),
-	)
-	GormLogger.LogMode(logger.Info)
+	GormLogger = NewGormLogger(WithSlowThreshold(time.Second * 10))
 }
 
 type gormLogger struct {
@@ -63,16 +60,15 @@ func WithSlowThreshold(dur time.Duration) GormLoggerOption {
 
 func NewGormLogger(opts ...GormLoggerOption) *gormLogger {
 	var (
-		traceStr     = "%s\n[%.3fms] [rows:%v] %s"
-		traceWarnStr = "%s %s\n[%.3fms] [rows:%v] %s"
-		traceErrStr  = "%s %s\n[%.3fms] [rows:%v] %s"
+		traceStr     = "[%.3fms] [rows:%v] %s"
+		traceWarnStr = "%s [%.3fms] [rows:%v] %s"
+		traceErrStr  = "%s [%.3fms] [rows:%v] %s"
 	)
 
 	logger := logging.NewPrettyLogger(
 		os.Stdout,
-		logging.WithModule("GORM"),
+		logging.WithEnableSource(true),
 	)
-	logger.SetWithSource(false)
 
 	l := &gormLogger{
 		logger:       logger,
@@ -102,44 +98,52 @@ func (gl *gormLogger) LogMode(level logger.LogLevel) logger.Interface {
 	return &newLogger
 }
 
-func (gl *gormLogger) Info(ctx context.Context, msg string, data ...interface{}) {
+func (gl *gormLogger) Info(ctx context.Context, msg string, data ...any) {
 	gl.logger.Infoc(gl.wrapPrefix(ctx), msg, data)
 }
 
-func (gl *gormLogger) Warn(ctx context.Context, msg string, data ...interface{}) {
+func (gl *gormLogger) Warn(ctx context.Context, msg string, data ...any) {
 	gl.logger.Warnc(gl.wrapPrefix(ctx), msg, data)
 }
 
-func (gl *gormLogger) Error(ctx context.Context, msg string, data ...interface{}) {
+func (gl *gormLogger) Error(ctx context.Context, msg string, data ...any) {
 	gl.logger.Errorc(gl.wrapPrefix(ctx), msg, data)
 }
 
 func (gl *gormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
+	if gl.logMod <= logger.Silent {
+		return
+	}
+
 	ctx = gl.wrapPrefix(ctx)
 	elapsed := time.Since(begin)
 
 	switch {
 	case err != nil && (!errors.Is(err, logger.ErrRecordNotFound) || !gl.ignoreRecordNotFoundError):
 		sql, rows := fc()
+
+		ctx = logging.WithSpecifySource(ctx, utils.FileWithLineNum())
 		if rows == -1 {
-			gl.logger.Errorc(ctx, gl.traceErrStr, utils.FileWithLineNum(), err, float64(elapsed.Nanoseconds())/1e6, "-", sql)
+			gl.logger.Errorc(ctx, gl.traceErrStr, err, float64(elapsed.Nanoseconds())/1e6, "-", sql)
 		} else {
-			gl.logger.Errorc(ctx, gl.traceErrStr, utils.FileWithLineNum(), err, float64(elapsed.Nanoseconds())/1e6, rows, sql)
+			gl.logger.Errorc(ctx, gl.traceErrStr, err, float64(elapsed.Nanoseconds())/1e6, rows, sql)
 		}
 	case elapsed > gl.slowThreshold && gl.slowThreshold != 0:
 		sql, rows := fc()
+		ctx = logging.WithSpecifySource(ctx, utils.FileWithLineNum())
 		slowLog := fmt.Sprintf("SLOW SQL >= %v", gl.slowThreshold)
 		if rows == -1 {
-			gl.logger.Warnc(ctx, gl.traceWarnStr, utils.FileWithLineNum(), slowLog, float64(elapsed.Nanoseconds())/1e6, "-", sql)
+			gl.logger.Warnc(ctx, gl.traceWarnStr, slowLog, float64(elapsed.Nanoseconds())/1e6, "-", sql)
 		} else {
-			gl.logger.Warnc(ctx, gl.traceWarnStr, utils.FileWithLineNum(), slowLog, float64(elapsed.Nanoseconds())/1e6, rows, sql)
+			gl.logger.Warnc(ctx, gl.traceWarnStr, slowLog, float64(elapsed.Nanoseconds())/1e6, rows, sql)
 		}
 	case gl.logMod == logger.Info:
 		sql, rows := fc()
+		ctx = logging.WithSpecifySource(ctx, utils.FileWithLineNum())
 		if rows == -1 {
-			gl.logger.Infoc(ctx, gl.traceStr, utils.FileWithLineNum(), float64(elapsed.Nanoseconds())/1e6, "-", sql)
+			gl.logger.Infoc(ctx, gl.traceStr, float64(elapsed.Nanoseconds())/1e6, "-", sql)
 		} else {
-			gl.logger.Infoc(ctx, gl.traceStr, utils.FileWithLineNum(), float64(elapsed.Nanoseconds())/1e6, rows, sql)
+			gl.logger.Infoc(ctx, gl.traceStr, float64(elapsed.Nanoseconds())/1e6, rows, sql)
 		}
 	}
 }

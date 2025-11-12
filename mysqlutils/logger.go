@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/logging/level"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/utils"
 )
@@ -26,6 +27,7 @@ var (
 
 func init() {
 	GormLogger = NewGormLogger(WithSlowThreshold(time.Second * 10))
+	GormLogger = GormLogger.LogMode(logger.Info)
 }
 
 type gormLogger struct {
@@ -69,6 +71,7 @@ func NewGormLogger(opts ...GormLoggerOption) *gormLogger {
 		os.Stdout,
 		logging.WithEnableSource(true),
 	)
+	logger.Enable(level.LevelDebug)
 
 	l := &gormLogger{
 		logger:       logger,
@@ -141,9 +144,9 @@ func (gl *gormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql
 		sql, rows := fc()
 		ctx = logging.WithSpecifySource(ctx, utils.FileWithLineNum())
 		if rows == -1 {
-			gl.logger.Infoc(ctx, gl.traceStr, float64(elapsed.Nanoseconds())/1e6, "-", sql)
+			gl.logger.Debugc(ctx, gl.traceStr, float64(elapsed.Nanoseconds())/1e6, "-", sql)
 		} else {
-			gl.logger.Infoc(ctx, gl.traceStr, float64(elapsed.Nanoseconds())/1e6, rows, sql)
+			gl.logger.Debugc(ctx, gl.traceStr, float64(elapsed.Nanoseconds())/1e6, rows, sql)
 		}
 	}
 }

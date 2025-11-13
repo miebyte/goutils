@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"github.com/miebyte/goutils/discover"
+	"github.com/miebyte/goutils/internal/share"
 	"github.com/pkg/errors"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 	"gorm.io/plugin/dbresolver"
 )
 
@@ -49,6 +51,10 @@ func (c *MysqlConfig) generateDSN() string {
 }
 
 func (conf *MysqlConfig) DialMysqlGorm() (*gorm.DB, error) {
+	if share.Debug() {
+		GormLogger = GormLogger.LogMode(logger.Info)
+	}
+
 	gormConf := &gorm.Config{
 		PrepareStmt: true,
 		Logger:      GormLogger,

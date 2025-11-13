@@ -141,7 +141,7 @@ func ErrorReturnHandler(fn errorReturnHandler) gin.HandlerFunc {
 			return
 		}
 
-		c.JSON(http.StatusOK, SuccessRet(nil))
+		c.JSON(http.StatusOK, SuccessRet[any](nil))
 	}
 }
 
@@ -199,7 +199,7 @@ func RequestWithErrorHandler[Q any](fn requestWithErrorHandler[Q]) gin.HandlerFu
 			return
 		}
 
-		c.JSON(http.StatusOK, SuccessRet(nil))
+		c.JSON(http.StatusOK, SuccessRet[any](nil))
 	}
 }
 

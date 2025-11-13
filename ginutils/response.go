@@ -10,17 +10,17 @@ package ginutils
 
 import "github.com/gin-gonic/gin"
 
-type Ret struct {
+type Ret[T any] struct {
 	Code    int `json:"code"`
-	Data    any `json:"data,omitempty"`
+	Data    T   `json:"data,omitempty"`
 	Message any `json:"message,omitempty"`
 }
 
-func SuccessRet(data any) *Ret {
-	return &Ret{Code: 200, Data: data, Message: "success"}
+func SuccessRet[T any](data T) *Ret[T] {
+	return &Ret[T]{Code: 200, Data: data, Message: "success"}
 }
 
-func ErrorRet(code int, message any) *Ret {
+func ErrorRet(code int, message any) *Ret[any] {
 	var msg any
 	switch m := message.(type) {
 	case string:
@@ -31,7 +31,7 @@ func ErrorRet(code int, message any) *Ret {
 		msg = m
 	}
 
-	return &Ret{Code: code, Data: nil, Message: msg}
+	return &Ret[any]{Code: code, Data: nil, Message: msg}
 }
 
 func ReturnSuccess(c *gin.Context, data any) {

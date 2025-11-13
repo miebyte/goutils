@@ -2,7 +2,6 @@ package prometheusutils
 
 import (
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -23,10 +22,6 @@ func SendAPICounter() {
 func SendAPIHistogram(url string, processTime float64, statusCode int) {
 	APIHistogram.WithLabelValues(url, strconv.Itoa(statusCode)).Observe(processTime)
 }
-
-var (
-	bizCodeRegex = regexp.MustCompile(`(/)\d+(/|$|\?|#)`)
-)
 
 // SendCurrentTCPConnectionGauge 发送tcp连接数的监控
 func SendCurrentTCPConnectionGauge() {

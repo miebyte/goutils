@@ -43,7 +43,6 @@ func WithHttpHandler(pattern string, handler http.Handler) ServiceOption {
 
 		cs.httpPatterns = append(cs.httpPatterns, pattern)
 		innerlog.Logger.Debugf("Registered http endpoint. path=%s\n", pattern)
-		cs.httpMux.Handle(healthCheckUrl, http.HandlerFunc(healthCheckApi))
 		cs.httpMux.Handle(pattern, http.StripPrefix(strings.TrimSuffix(pattern, "/"), handler))
 	}
 }
@@ -56,6 +55,8 @@ func healthCheckApi(w http.ResponseWriter, r *http.Request) {
 func (c *CoresService) listenHttp(lst net.Listener) mountFn {
 	return mountFn{
 		fn: func(ctx context.Context) (err error) {
+			c.httpMux.Handle(healthCheckUrl, http.HandlerFunc(healthCheckApi))
+
 			handler := c.httpHandler
 			if c.httpCors {
 				handler = cors.AllowAll().Handler(handler)

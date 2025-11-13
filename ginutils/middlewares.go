@@ -38,7 +38,7 @@ func LoggingRequest(header bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 
-		fields := map[string]interface{}{
+		fields := map[string]any{
 			"method": c.Request.Method,
 			"uri":    c.Request.URL.RequestURI(),
 			"remote": c.Request.RemoteAddr,

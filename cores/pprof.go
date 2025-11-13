@@ -50,5 +50,4 @@ func (cs *CoresService) setupPprof() {
 	target := fmt.Sprintf("localhost:%s", port)
 
 	innerlog.Logger.Debugf("Pprof enabled. URL=%s", fmt.Sprintf("http://%s%s", target, pprofUrl))
-
 }

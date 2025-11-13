@@ -68,6 +68,7 @@ func main() {
 
 	srv := cores.NewCores(
 		cores.WithPprof(),
+		cores.WithPrometheus(),
 		cores.WithRegisterService(),
 		cores.WithHttpHandler("/", app),
 		cores.WithWorker(func(ctx context.Context) error {

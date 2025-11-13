@@ -20,6 +20,10 @@ import (
 	"github.com/rs/cors"
 )
 
+const (
+	healthCheckUrl = "/health_check"
+)
+
 func WithHttpCORS() ServiceOption {
 	return func(cs *CoresService) {
 		cs.httpCors = true
@@ -39,29 +43,38 @@ func WithHttpHandler(pattern string, handler http.Handler) ServiceOption {
 
 		cs.httpPatterns = append(cs.httpPatterns, pattern)
 		innerlog.Logger.Debugf("Registered http endpoint. path=%s\n", pattern)
+		cs.httpMux.Handle(healthCheckUrl, http.HandlerFunc(healthCheckApi))
 		cs.httpMux.Handle(pattern, http.StripPrefix(strings.TrimSuffix(pattern, "/"), handler))
 	}
+}
+
+func healthCheckApi(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok"))
 }
 
 func (c *CoresService) listenHttp(lst net.Listener) mountFn {
 	return mountFn{
 		fn: func(ctx context.Context) (err error) {
-
 			handler := c.httpHandler
 			if c.httpCors {
 				handler = cors.AllowAll().Handler(handler)
 			}
 
-			c.httpServer = &http.Server{
-				Handler:      handler,
-				ReadTimeout:  10 * time.Second,
-				WriteTimeout: 10 * time.Second,
-				IdleTimeout:  10 * time.Second,
+			if c.usePrometheus {
+				handler = c.monitorHttp(handler)
 			}
 
+			c.httpServer = &http.Server{
+				Handler:           handler,
+				ReadTimeout:       c.httpServerConfig.ReadTimeout,
+				ReadHeaderTimeout: c.httpServerConfig.ReadHeaderTimeout,
+				WriteTimeout:      c.httpServerConfig.WriteTimeout,
+				IdleTimeout:       c.httpServerConfig.IdleTimeout,
+				MaxHeaderBytes:    c.httpServerConfig.MaxHeaderBytes,
+			}
 			err = c.httpServer.Serve(lst)
-			if errors.Is(err, net.ErrClosed) {
-				innerlog.Logger.Warnc(ctx, "listener is close. %v", err)
+			if errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) {
 				return nil
 			} else if err != nil {
 				innerlog.Logger.Errorc(ctx, "HttpListener serve error: %v\n", err)
@@ -70,5 +83,51 @@ func (c *CoresService) listenHttp(lst net.Listener) mountFn {
 			return nil
 		},
 		name: "HttpListener",
+	}
+}
+
+type HttpServerConfig struct {
+	ReadTimeout       time.Duration
+	ReadHeaderTimeout time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
+}
+
+func (hc *HttpServerConfig) SetDefault() {
+	if hc.ReadTimeout == 0 {
+		hc.ReadTimeout = defaultHttpServerConfig.ReadTimeout
+	}
+
+	if hc.ReadHeaderTimeout == 0 {
+		hc.ReadHeaderTimeout = defaultHttpServerConfig.ReadHeaderTimeout
+	}
+
+	if hc.WriteTimeout == 0 {
+		hc.WriteTimeout = defaultHttpServerConfig.WriteTimeout
+	}
+
+	if hc.IdleTimeout == 0 {
+		hc.IdleTimeout = defaultHttpServerConfig.IdleTimeout
+	}
+
+	if hc.MaxHeaderBytes == 0 {
+		hc.MaxHeaderBytes = defaultHttpServerConfig.MaxHeaderBytes
+	}
+}
+
+var (
+	defaultHttpServerConfig = &HttpServerConfig{
+		ReadTimeout:       10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       300 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB,
+	}
+)
+
+func WithHttpServerConfig(config *HttpServerConfig) ServiceOption {
+	return func(cs *CoresService) {
+		cs.httpServerConfig = config
 	}
 }

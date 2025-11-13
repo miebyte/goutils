@@ -1,6 +1,6 @@
 module github.com/miebyte/goutils
 
-go 1.25.0
+go 1.25.4
 
 require (
 	github.com/Masterminds/semver v1.5.0

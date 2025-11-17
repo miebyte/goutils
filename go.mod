@@ -7,6 +7,7 @@ require (
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/gin-gonic/gin v1.10.1
 	github.com/go-playground/validator/v10 v10.25.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/consul/api v1.32.1
 	github.com/hashicorp/go-version v1.6.0
 	github.com/mattn/go-isatty v0.0.20

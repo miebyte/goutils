@@ -21,7 +21,7 @@ type Server struct {
 	upgrader    websocket.Upgrader
 	mu          sync.RWMutex
 	namespaces  map[string]*Namespace
-	middlewares []Middleware
+	middlewares middlewareChain
 
 	pingInterval time.Duration
 	pongTimeout  time.Duration
@@ -109,12 +109,7 @@ func (s *Server) On(event string, handler EventHandler) {
 
 // Use 注册全局中间件。
 func (s *Server) Use(mw Middleware) {
-	if mw == nil {
-		return
-	}
-	s.mu.Lock()
-	s.middlewares = append(s.middlewares, mw)
-	s.mu.Unlock()
+	s.middlewares.Add(mw)
 }
 
 // Emit 代理默认命名空间的广播。
@@ -155,15 +150,7 @@ func (s *Server) heartbeatConfig() (time.Duration, time.Duration) {
 }
 
 func (s *Server) runMiddlewares(conn *Conn) error {
-	s.mu.RLock()
-	mws := append([]Middleware(nil), s.middlewares...)
-	s.mu.RUnlock()
-	for _, mw := range mws {
-		if err := mw(conn); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.middlewares.Run(conn)
 }
 
 func normalizeNamespace(name string) string {

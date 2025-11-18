@@ -42,23 +42,7 @@ func (r *Room) emit(event string, payload any, exclude string) error {
 		return err
 	}
 
-	r.mu.RLock()
-	receivers := make([]*Conn, 0, len(r.members))
-	for id, c := range r.members {
-		if exclude != "" && id == exclude {
-			continue
-		}
-		receivers = append(receivers, c)
-	}
-	r.mu.RUnlock()
-
-	var firstErr error
-	for _, c := range receivers {
-		if err := c.sendFrame(data); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
+	return r.namespace.hub.Deliver(data, r.receivers(exclude))
 }
 
 func (r *Room) add(conn *Conn) {
@@ -73,4 +57,17 @@ func (r *Room) remove(connID string) bool {
 	empty := len(r.members) == 0
 	r.mu.Unlock()
 	return empty
+}
+
+func (r *Room) receivers(exclude string) []*Conn {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	receivers := make([]*Conn, 0, len(r.members))
+	for id, conn := range r.members {
+		if exclude != "" && id == exclude {
+			continue
+		}
+		receivers = append(receivers, conn)
+	}
+	return receivers
 }

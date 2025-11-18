@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/miebyte/goutils/flags"
@@ -13,7 +14,9 @@ import (
 func main() {
 	flags.Parse()
 
-	srv := websocketutils.NewServer()
+	srv := websocketutils.NewServer(
+		websocketutils.WithHeartbeat(10*time.Second, 20*time.Second),
+	)
 	srv.Use(func(socket websocketutils.Socket) error {
 		logging.Infof("middleware: %s entering namespace %s", socket.ID(), socket.Namespace())
 		return nil

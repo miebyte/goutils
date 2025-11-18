@@ -10,21 +10,23 @@ type Namespace struct {
 	name   string
 	server *Server
 
-	mu          sync.RWMutex
-	rooms       map[string]*Room
-	connections map[string]*Conn
-	middlewares []Middleware
-	handlers    map[string][]EventHandler
+	handlerMu sync.RWMutex
+	handlers  map[string][]EventHandler
+
+	middlewares middlewareChain
+	hub         *connHub
+	rooms       *roomRegistry
 }
 
 func newNamespace(server *Server, name string) *Namespace {
-	return &Namespace{
-		name:        name,
-		server:      server,
-		rooms:       make(map[string]*Room),
-		connections: make(map[string]*Conn),
-		handlers:    make(map[string][]EventHandler),
+	ns := &Namespace{
+		name:     name,
+		server:   server,
+		handlers: make(map[string][]EventHandler),
+		hub:      newConnHub(),
 	}
+	ns.rooms = newRoomRegistry(ns)
+	return ns
 }
 
 // Name 返回命名空间名称。
@@ -37,19 +39,14 @@ func (n *Namespace) On(event string, handler EventHandler) {
 	if event == "" || handler == nil {
 		return
 	}
-	n.mu.Lock()
+	n.handlerMu.Lock()
 	n.handlers[event] = append(n.handlers[event], handler)
-	n.mu.Unlock()
+	n.handlerMu.Unlock()
 }
 
 // Use 增加命名空间中间件。
 func (n *Namespace) Use(mw Middleware) {
-	if mw == nil {
-		return
-	}
-	n.mu.Lock()
-	n.middlewares = append(n.middlewares, mw)
-	n.mu.Unlock()
+	n.middlewares.Add(mw)
 }
 
 // Emit 广播事件到整个命名空间。
@@ -58,21 +55,7 @@ func (n *Namespace) Emit(event string, payload any) error {
 	if err != nil {
 		return err
 	}
-
-	n.mu.RLock()
-	receivers := make([]*Conn, 0, len(n.connections))
-	for _, conn := range n.connections {
-		receivers = append(receivers, conn)
-	}
-	n.mu.RUnlock()
-
-	var firstErr error
-	for _, conn := range receivers {
-		if err := conn.sendFrame(frame); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
+	return n.hub.Deliver(frame, n.hub.Snapshot())
 }
 
 // To 返回房间广播器。
@@ -84,73 +67,37 @@ func (n *Namespace) To(room string) TargetEmitter {
 
 // Room 返回指定房间，没有则创建。
 func (n *Namespace) Room(name string) *Room {
-	if name == "" {
-		return nil
-	}
-	n.mu.Lock()
-	room := n.rooms[name]
-	if room == nil {
-		room = newRoom(n, name)
-		n.rooms[name] = room
-	}
-	n.mu.Unlock()
-	return room
+	return n.rooms.GetOrCreate(name)
 }
 
 func (n *Namespace) runMiddlewares(conn *Conn) error {
-	n.mu.RLock()
-	mws := append([]Middleware(nil), n.middlewares...)
-	n.mu.RUnlock()
-	for _, mw := range mws {
-		if err := mw(conn); err != nil {
-			return err
-		}
-	}
-	return nil
+	return n.middlewares.Run(conn)
 }
 
 func (n *Namespace) attachConnection(conn *Conn) {
-	n.mu.Lock()
-	n.connections[conn.id] = conn
-	handlers := append([]EventHandler(nil), n.handlers[EventConnection]...)
-	n.mu.Unlock()
+	n.hub.Add(conn)
+	handlers := n.handlersSnapshot(EventConnection)
 	for _, handler := range handlers {
 		handler(conn)
 	}
 }
 
 func (n *Namespace) detachConnection(conn *Conn) {
-	n.mu.Lock()
-	delete(n.connections, conn.id)
-	n.mu.Unlock()
+	n.hub.Remove(conn.id)
 }
 
 func (n *Namespace) joinRoom(name string, conn *Conn) error {
-	room := n.Room(name)
-	if room == nil {
-		return ErrNoSuchRoom
-	}
-	room.add(conn)
-	conn.addRoom(name)
-	return nil
+	return n.rooms.Join(name, conn)
 }
 
 func (n *Namespace) leaveRoom(name string, conn *Conn) {
-	n.mu.RLock()
-	room := n.rooms[name]
-	n.mu.RUnlock()
-	if room == nil {
-		return
-	}
-	empty := room.remove(conn.id)
-	conn.removeRoom(name)
-	if empty {
-		n.mu.Lock()
-		if current, ok := n.rooms[name]; ok && current == room {
-			delete(n.rooms, name)
-		}
-		n.mu.Unlock()
-	}
+	n.rooms.Leave(name, conn)
+}
+
+func (n *Namespace) handlersSnapshot(event string) []EventHandler {
+	n.handlerMu.RLock()
+	defer n.handlerMu.RUnlock()
+	return append([]EventHandler(nil), n.handlers[event]...)
 }
 
 // roomEmitter 实现 TargetEmitter。
@@ -189,14 +136,7 @@ func (r *roomEmitter) Emit(event string, payload any) error {
 		return ErrNoSuchRoom
 	}
 
-	r.namespace.mu.RLock()
-	rooms := make([]*Room, 0, len(roomSet))
-	for name := range roomSet {
-		if room := r.namespace.rooms[name]; room != nil {
-			rooms = append(rooms, room)
-		}
-	}
-	r.namespace.mu.RUnlock()
+	rooms := r.namespace.rooms.Select(roomSet)
 	if len(rooms) == 0 {
 		return ErrNoSuchRoom
 	}
@@ -208,11 +148,9 @@ func (r *roomEmitter) Emit(event string, payload any) error {
 		room.mu.RUnlock()
 	}
 
-	var firstErr error
+	buffer := make([]*Conn, 0, len(recipients))
 	for _, conn := range recipients {
-		if err := conn.sendFrame(frame); err != nil && firstErr == nil {
-			firstErr = err
-		}
+		buffer = append(buffer, conn)
 	}
-	return firstErr
+	return r.namespace.hub.Deliver(frame, buffer)
 }

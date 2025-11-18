@@ -1,8 +1,7 @@
 package websocketutils
 
 import (
-	"encoding/json"
-	"strings"
+	"maps"
 	"sync"
 )
 
@@ -76,6 +75,13 @@ func (n *Namespace) Emit(event string, payload any) error {
 	return firstErr
 }
 
+// To 返回房间广播器。
+func (n *Namespace) To(room string) TargetEmitter {
+	return (&roomEmitter{
+		namespace: n,
+	}).To(room)
+}
+
 // Room 返回指定房间，没有则创建。
 func (n *Namespace) Room(name string) *Room {
 	if name == "" {
@@ -104,8 +110,6 @@ func (n *Namespace) runMiddlewares(conn *Conn) error {
 }
 
 func (n *Namespace) attachConnection(conn *Conn) {
-	n.bindDefaultSocketEvents(conn)
-
 	n.mu.Lock()
 	n.connections[conn.id] = conn
 	handlers := append([]EventHandler(nil), n.handlers[EventConnection]...)
@@ -113,20 +117,6 @@ func (n *Namespace) attachConnection(conn *Conn) {
 	for _, handler := range handlers {
 		handler(conn)
 	}
-}
-
-func (n *Namespace) bindDefaultSocketEvents(conn *Conn) {
-	conn.On(EventJoinRoom, func(_ Socket, data json.RawMessage) {
-		if room := parseRoomName(data); room != "" {
-			_ = n.joinRoom(room, conn)
-		}
-	})
-
-	conn.On(EventLeaveRoom, func(_ Socket, data json.RawMessage) {
-		if room := parseRoomName(data); room != "" {
-			n.leaveRoom(room, conn)
-		}
-	})
 }
 
 func (n *Namespace) detachConnection(conn *Conn) {
@@ -163,15 +153,66 @@ func (n *Namespace) leaveRoom(name string, conn *Conn) {
 	}
 }
 
-func parseRoomName(data json.RawMessage) string {
-	if len(data) == 0 {
-		return ""
+// roomEmitter 实现 TargetEmitter。
+type roomEmitter struct {
+	namespace *Namespace
+	targets   []string
+}
+
+// To 追加房间目标。
+func (r *roomEmitter) To(room string) TargetEmitter {
+	if r == nil || room == "" {
+		return r
 	}
-	var payload struct {
-		Room string `json:"room"`
+	r.targets = append(r.targets, room)
+	return r
+}
+
+// Emit 将事件发送到指定房间。
+func (r *roomEmitter) Emit(event string, payload any) error {
+	if r == nil || r.namespace == nil {
+		return ErrNoSuchRoom
 	}
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return ""
+	frame, err := encodeFrame(event, payload)
+	if err != nil {
+		return err
 	}
-	return strings.TrimSpace(payload.Room)
+
+	roomSet := make(map[string]struct{})
+	for _, name := range r.targets {
+		if name == "" {
+			continue
+		}
+		roomSet[name] = struct{}{}
+	}
+	if len(roomSet) == 0 {
+		return ErrNoSuchRoom
+	}
+
+	r.namespace.mu.RLock()
+	rooms := make([]*Room, 0, len(roomSet))
+	for name := range roomSet {
+		if room := r.namespace.rooms[name]; room != nil {
+			rooms = append(rooms, room)
+		}
+	}
+	r.namespace.mu.RUnlock()
+	if len(rooms) == 0 {
+		return ErrNoSuchRoom
+	}
+
+	recipients := make(map[string]*Conn)
+	for _, room := range rooms {
+		room.mu.RLock()
+		maps.Copy(recipients, room.members)
+		room.mu.RUnlock()
+	}
+
+	var firstErr error
+	for _, conn := range recipients {
+		if err := conn.sendFrame(frame); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }

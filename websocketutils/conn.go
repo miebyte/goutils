@@ -2,15 +2,15 @@ package websocketutils
 
 import (
 	"context"
-	"strconv"
 	"sync"
-	"sync/atomic"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/miebyte/goutils/logging"
 )
 
-var globalConnSeq uint64
+const pingWriteWait = 5 * time.Second
 
 // Conn 封装 WebSocket 连接并提供 Socket 能力。
 type Conn struct {
@@ -27,24 +27,31 @@ type Conn struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	pingInterval time.Duration
+	pongTimeout  time.Duration
 }
 
 func newConn(ns *Namespace, ws *websocket.Conn) *Conn {
 	id := nextConnID()
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = logging.With(ctx, "ConnID", id)
+	pingInterval, pongTimeout := ns.server.heartbeatConfig()
 	c := &Conn{
-		id:        id,
-		namespace: ns,
-		ws:        ws,
-		send:      make(chan []byte, 16),
-		handlers:  make(map[string][]MessageHandler),
-		rooms:     make(map[string]struct{}),
-		closed:    make(chan struct{}),
-		ctx:       ctx,
-		cancel:    cancel,
+		id:           id,
+		namespace:    ns,
+		ws:           ws,
+		send:         make(chan []byte, 16),
+		handlers:     make(map[string][]MessageHandler),
+		rooms:        make(map[string]struct{}),
+		closed:       make(chan struct{}),
+		ctx:          ctx,
+		cancel:       cancel,
+		pingInterval: pingInterval,
+		pongTimeout:  pongTimeout,
 	}
 
+	c.setupHeartbeat()
 	go c.readLoop()
 	go c.writeLoop()
 	return c
@@ -154,6 +161,15 @@ func (c *Conn) readLoop() {
 }
 
 func (c *Conn) writeLoop() {
+	var (
+		ticker *time.Ticker
+		pingC  <-chan time.Time
+	)
+	if c.pingInterval > 0 {
+		ticker = time.NewTicker(c.pingInterval)
+		pingC = ticker.C
+		defer ticker.Stop()
+	}
 	for {
 		select {
 		case <-c.closed:
@@ -163,6 +179,12 @@ func (c *Conn) writeLoop() {
 				return
 			}
 			if err := c.ws.WriteMessage(websocket.TextMessage, payload); err != nil {
+				_ = c.Close()
+				return
+			}
+		case <-pingC:
+			if err := c.sendPing(); err != nil {
+				logging.Warnc(c.ctx, "send ping error: %v", err)
 				_ = c.Close()
 				return
 			}
@@ -203,7 +225,37 @@ func (c *Conn) removeRoom(name string) {
 	c.mu.Unlock()
 }
 
+func (c *Conn) setupHeartbeat() {
+	if c.pongTimeout <= 0 {
+		return
+	}
+	if err := c.refreshReadDeadline(); err != nil {
+		logging.Warnc(c.ctx, "set read deadline error: %v", err)
+	}
+	c.ws.SetPongHandler(func(string) error {
+		if err := c.refreshReadDeadline(); err != nil {
+			logging.Warnc(c.ctx, "refresh read deadline error: %v", err)
+			return err
+		}
+		return nil
+	})
+}
+
+func (c *Conn) refreshReadDeadline() error {
+	if c.pongTimeout <= 0 {
+		return nil
+	}
+	return c.ws.SetReadDeadline(time.Now().Add(c.pongTimeout))
+}
+
+func (c *Conn) sendPing() error {
+	if c.pingInterval <= 0 {
+		return nil
+	}
+	logging.Debugc(c.ctx, "sending ping")
+	return c.ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(pingWriteWait))
+}
+
 func nextConnID() string {
-	seq := atomic.AddUint64(&globalConnSeq, 1)
-	return "ws-conn-" + strconv.FormatUint(seq, 10)
+	return uuid.NewString()
 }

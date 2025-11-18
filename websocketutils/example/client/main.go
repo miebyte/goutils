@@ -1,130 +1,97 @@
 package main
 
 import (
-	"log"
-	"net/http"
-	"strconv"
-	"sync"
-	"sync/atomic"
+	"context"
+	"encoding/json"
+	"flag"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/websocketutils"
 )
 
-type wireMessage struct {
-	Type      string         `json:"type"`
-	Namespace string         `json:"namespace,omitempty"`
-	Event     string         `json:"event,omitempty"`
-	Data      map[string]any `json:"data,omitempty"`
-	AckID     string         `json:"ackId,omitempty"`
-	Room      string         `json:"room,omitempty"`
+type frame struct {
+	Event string          `json:"event"`
+	Data  json.RawMessage `json:"data,omitempty"`
 }
 
-var ackSeq atomic.Uint64
-
 func main() {
-	conn, _, err := websocket.DefaultDialer.Dial("ws://127.0.0.1:8080/ws", http.Header{})
+	addr := flag.String("addr", "ws://localhost:8080/my-namespace", "websocket server url")
+	flag.Parse()
+
+	conn, _, err := websocket.DefaultDialer.Dial(*addr, nil)
 	if err != nil {
-		log.Fatalf("failed to dial websocket: %v", err)
+		logging.Fatalf("dial error: %v", err)
 	}
 	defer conn.Close()
 
-	writeMu := &sync.Mutex{}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	go readLoop(conn)
-	go chatRoomLoop(conn, writeMu, "/", "lobby", "example-client")
-	// go notifyLoop(conn, writeMu, "/")
+	go readLoop(ctx, conn)
 
-	pingLoop(conn, writeMu)
+	// 加入房间
+	sendFrame(conn, websocketutils.EventJoinRoom, map[string]string{"room": "orders"})
+	time.Sleep(time.Second)
+
+	// 发送 hi 事件
+	sendFrame(conn, "hi", map[string]string{"message": "hello server"})
+	time.Sleep(time.Second)
+
+	// 发送 broadcast 事件
+	sendFrame(conn, "broadcast", map[string]string{
+		"room":    "orders",
+		"message": "hello all orders clients",
+	})
+	time.Sleep(time.Second)
+
+	// 离开房间
+	sendFrame(conn, websocketutils.EventLeaveRoom, map[string]string{"room": "orders"})
+	time.Sleep(time.Second)
+
+	// 发送 echo 事件
+	time.Sleep(time.Second)
+	sendFrame(conn, "echo", map[string]string{"message": "ping"})
+
+	logging.Infof("press Ctrl+C to exit")
+	<-ctx.Done()
+	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"))
+	time.Sleep(200 * time.Millisecond)
 }
 
-func chatRoomLoop(conn *websocket.Conn, mu *sync.Mutex, namespace, room, user string) {
-	if err := sendJSON(conn, mu, wireMessage{Type: "join", Namespace: namespace, Room: room}); err != nil {
-		log.Printf("join room failed: %v", err)
-		return
-	}
-	log.Printf("joined room %s", room)
-
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-
-	counter := 0
-	for range ticker.C {
-		counter++
-		ackID := newAckID()
-		payload := wireMessage{
-			Type:      "event",
-			Namespace: namespace,
-			Event:     "chat",
-			AckID:     ackID,
-			Room:      room,
-			Data: map[string]any{
-				"user":    user,
-				"message": "room message #" + strconv.Itoa(counter),
-			},
-		}
-		if err := sendJSON(conn, mu, payload); err != nil {
-			log.Printf("send room message failed: %v", err)
-			return
-		}
-		log.Printf("sent chat message %d with ack %s", counter, ackID)
-		break
-	}
-}
-
-func notifyLoop(conn *websocket.Conn, mu *sync.Mutex, namespace string) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	counter := 0
-	for range ticker.C {
-		counter++
-		msg := wireMessage{
-			Type:      "event",
-			Namespace: namespace,
-			Event:     "notify",
-			Data: map[string]any{
-				"sequence": counter,
-				"content":  "broadcast event",
-			},
-		}
-		if err := sendJSON(conn, mu, msg); err != nil {
-			log.Printf("send notify failed: %v", err)
-			return
-		}
-	}
-}
-
-func pingLoop(conn *websocket.Conn, mu *sync.Mutex) {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		if err := sendJSON(conn, mu, wireMessage{Type: "ping"}); err != nil {
-			log.Printf("ping failed: %v", err)
-			return
-		}
-	}
-}
-
-func readLoop(conn *websocket.Conn) {
+func readLoop(ctx context.Context, conn *websocket.Conn) {
 	for {
-		var msg map[string]any
-		if err := conn.ReadJSON(&msg); err != nil {
-			log.Printf("read error: %v", err)
+		select {
+		case <-ctx.Done():
 			return
+		default:
+			var f frame
+			if err := conn.ReadJSON(&f); err != nil {
+				logging.Errorf("read error: %v", err)
+				return
+			}
+			logging.Infof("event=%s payload=%s", f.Event, string(f.Data))
 		}
-		log.Printf("recv %#v", msg)
 	}
 }
 
-func sendJSON(conn *websocket.Conn, mu *sync.Mutex, v any) error {
-	mu.Lock()
-	defer mu.Unlock()
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	return conn.WriteJSON(v)
-}
-
-func newAckID() string {
-	id := ackSeq.Add(1)
-	return "client-ack-" + strconv.FormatUint(id, 10)
+func sendFrame(conn *websocket.Conn, event string, payload any) {
+	msg := frame{Event: event}
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			logging.Errorf("marshal error: %v", err)
+			return
+		}
+		msg.Data = data
+	}
+	if err := conn.WriteJSON(msg); err != nil {
+		logging.Errorf("write error: %v", err)
+	} else {
+		logging.Infof("sent event=%s", event)
+	}
 }

@@ -3,10 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
-	"net/http"
-	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/miebyte/goutils/ginutils"
@@ -15,52 +11,91 @@ import (
 )
 
 func main() {
-	engine := ginutils.Default()
-	ws := newServer()
-
-	engine.GET("/ws", func(c *gin.Context) {
-		ws.ServeHTTP(c.Writer, c.Request)
+	srv := websocketutils.NewServer()
+	srv.Use(func(socket websocketutils.Socket) error {
+		logging.Infof("middleware: %s entering namespace %s", socket.ID(), socket.Namespace())
+		return nil
 	})
 
-	if err := engine.Run(":8080"); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("failed to start server: %v", err)
-	}
-}
+	namespace := srv.Of("/my-namespace")
+	namespace.Use(func(socket websocketutils.Socket) error {
+		logging.Infof("ns middleware: established %s", socket.ID())
+		return nil
+	})
 
-var (
-	once     sync.Once
-	wsServer *websocketutils.Server
-)
+	namespace.On(websocketutils.EventConnection, func(socket websocketutils.Socket) {
+		logging.Infof("connection established: %s", socket.ID())
 
-type chatMessage struct {
-	User    string `json:"user"`
-	Message string `json:"message"`
-}
-
-func newServer() *websocketutils.Server {
-	once.Do(func() {
-		wsServer = websocketutils.NewServer(
-			websocketutils.WithPingInterval(2 * time.Second),
-		)
-		wsServer.On("chat", func(client *websocketutils.Client, event *websocketutils.Event) {
-			var payload chatMessage
-			if err := json.Unmarshal(event.Data, &payload); err != nil {
-				_ = client.EmitToNamespace(event.Namespace, "error", map[string]any{"error": "invalid payload"})
+		socket.On(websocketutils.EventJoinRoom, func(s websocketutils.Socket, data json.RawMessage) {
+			var payload map[string]string
+			_ = json.Unmarshal(data, &payload)
+			roomName := payload["room"]
+			if roomName == "" {
 				return
 			}
-			fmt.Println("chat", logging.Jsonify(payload))
-
-			if err := wsServer.EmitExcept("chat", map[string]any{
-				"user":    payload.User,
-				"message": payload.Message,
-			}, client); err != nil {
-				log.Printf("broadcast error: %v", err)
+			if room := namespace.Room(roomName); room != nil {
+				if err := room.EmitExcept("room:joined", map[string]string{
+					"message": fmt.Sprintf("%s joined %s room", s.ID(), roomName),
+				}, s); err != nil {
+					logging.Errorf("room joined notify err: %v", err)
+				}
 			}
 
-			if event.Ack != nil {
-				_ = event.Ack(map[string]any{"status": "ok"})
+			logging.Infof("joined room: %s", roomName)
+		})
+
+		socket.On(websocketutils.EventLeaveRoom, func(s websocketutils.Socket, data json.RawMessage) {
+			var payload map[string]string
+			_ = json.Unmarshal(data, &payload)
+			roomName := payload["room"]
+			if roomName == "" {
+				return
+			}
+			if room := namespace.Room(roomName); room != nil {
+				if err := room.Emit("room:left", map[string]string{
+					"message": fmt.Sprintf("%s left %s room", s.ID(), roomName),
+				}); err != nil {
+					logging.Errorf("room left notify err: %v", err)
+				}
+			}
+
+			logging.Infof("left room: %s", roomName)
+		})
+
+		socket.On("hi", func(s websocketutils.Socket, data json.RawMessage) {
+			var payload map[string]string
+			_ = json.Unmarshal(data, &payload)
+			logging.Infof("received hi from %s: %#v", s.ID(), payload)
+
+			_ = s.Emit("hi:ack", map[string]string{
+				"message": fmt.Sprintf("hello %s", s.ID()),
+			})
+		})
+
+		socket.On("broadcast", func(s websocketutils.Socket, data json.RawMessage) {
+			var payload map[string]string
+			_ = json.Unmarshal(data, &payload)
+			msg := payload["message"]
+			if room := namespace.Room(payload["room"]); room != nil {
+				if err := room.Emit("room:message", map[string]string{
+					"from":    s.ID(),
+					"message": msg + "broadcasted",
+				}); err != nil {
+					logging.Errorf("room emit err: %v", err)
+				}
 			}
 		})
+
+		socket.On("echo", func(s websocketutils.Socket, data json.RawMessage) {
+			_ = s.Emit("echo", data)
+		})
 	})
-	return wsServer
+
+	engine := ginutils.Default()
+
+	engine.GET("/:namespace", func(c *gin.Context) {
+		srv.ServeHTTP(c.Writer, c.Request)
+	})
+
+	engine.Run(":8080")
 }

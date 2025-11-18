@@ -1,0 +1,76 @@
+package websocketutils
+
+import "sync"
+
+// Room 代表命名空间中的房间。
+type Room struct {
+	name      string
+	namespace *Namespace
+	mu        sync.RWMutex
+	members   map[string]*Conn
+}
+
+func newRoom(ns *Namespace, name string) *Room {
+	return &Room{
+		name:      name,
+		namespace: ns,
+		members:   make(map[string]*Conn),
+	}
+}
+
+// Name 返回房间名称。
+func (r *Room) Name() string {
+	return r.name
+}
+
+// Emit 向房间内所有连接广播事件。
+func (r *Room) Emit(event string, payload any) error {
+	return r.emit(event, payload, "")
+}
+
+// EmitExcept 在广播时排除指定连接。
+func (r *Room) EmitExcept(event string, payload any, socket Socket) error {
+	if socket == nil {
+		return r.emit(event, payload, "")
+	}
+	return r.emit(event, payload, socket.ID())
+}
+
+func (r *Room) emit(event string, payload any, exclude string) error {
+	data, err := encodeFrame(event, payload)
+	if err != nil {
+		return err
+	}
+
+	r.mu.RLock()
+	receivers := make([]*Conn, 0, len(r.members))
+	for id, c := range r.members {
+		if exclude != "" && id == exclude {
+			continue
+		}
+		receivers = append(receivers, c)
+	}
+	r.mu.RUnlock()
+
+	var firstErr error
+	for _, c := range receivers {
+		if err := c.sendFrame(data); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func (r *Room) add(conn *Conn) {
+	r.mu.Lock()
+	r.members[conn.id] = conn
+	r.mu.Unlock()
+}
+
+func (r *Room) remove(connID string) bool {
+	r.mu.Lock()
+	delete(r.members, connID)
+	empty := len(r.members) == 0
+	r.mu.Unlock()
+	return empty
+}

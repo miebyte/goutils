@@ -2,6 +2,7 @@ package websocketutils
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ type Conn struct {
 	id        string
 	namespace *Namespace
 	ws        *websocket.Conn
+	req       *http.Request
 
 	send      chan []byte
 	handlers  map[string][]MessageHandler
@@ -32,15 +34,16 @@ type Conn struct {
 	pongTimeout  time.Duration
 }
 
-func newConn(ns *Namespace, ws *websocket.Conn) *Conn {
+func newConn(ns *Namespace, ws *websocket.Conn, req *http.Request) *Conn {
 	id := nextConnID()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(logging.CloneContext(req.Context()))
 	ctx = logging.With(ctx, "ConnID", id)
 	pingInterval, pongTimeout := ns.server.heartbeatConfig()
 	c := &Conn{
 		id:           id,
 		namespace:    ns,
 		ws:           ws,
+		req:          req,
 		send:         make(chan []byte, 16),
 		handlers:     make(map[string][]MessageHandler),
 		rooms:        make(map[string]struct{}),
@@ -65,6 +68,11 @@ func (c *Conn) ID() string {
 // Namespace 返回命名空间名称。
 func (c *Conn) Namespace() string {
 	return c.namespace.name
+}
+
+// Request 返回握手请求。
+func (c *Conn) Request() *http.Request {
+	return c.req
 }
 
 // Context 返回连接上下文。

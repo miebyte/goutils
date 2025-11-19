@@ -25,10 +25,15 @@ type Server struct {
 
 	pingInterval time.Duration
 	pongTimeout  time.Duration
+
+	allowRequest AllowRequestFunc
 }
 
 // ServerOption 用于自定义 Server。
 type ServerOption func(*Server)
+
+// AllowRequestFunc 用于在握手阶段决定是否允许请求。
+type AllowRequestFunc func(r *http.Request) error
 
 // NewServer 创建一个新的 Server。
 func NewServer(opts ...ServerOption) *Server {
@@ -76,17 +81,29 @@ func WithHeartbeat(pingInterval, pongTimeout time.Duration) ServerOption {
 	}
 }
 
+// WithAllowRequest 配置握手校验函数。
+func WithAllowRequest(fn AllowRequestFunc) ServerOption {
+	return func(s *Server) {
+		s.SetAllowRequest(fn)
+	}
+}
+
 // ServeHTTP 实现 http.Handler。
 // Server 会根据请求的 URL 解析出一个命名空间并自动加入
 // 每个 socket 都会自动加入一个由其自己的 id 标识的房间。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if err := s.checkAllowRequest(r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		logging.Warnf("websocket request rejected: path=%s err=%v", r.URL.Path, err)
+		return
+	}
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 
 	namespace := s.Of(r.URL.Path)
-	socket := newConn(namespace, conn)
+	socket := newConn(namespace, conn, r)
 	if err := s.runMiddlewares(socket); err != nil {
 		_ = socket.Close()
 		return
@@ -149,6 +166,13 @@ func (s *Server) heartbeatConfig() (time.Duration, time.Duration) {
 	return s.pingInterval, s.pongTimeout
 }
 
+// SetAllowRequest 设置握手校验函数。
+func (s *Server) SetAllowRequest(fn AllowRequestFunc) {
+	s.mu.Lock()
+	s.allowRequest = fn
+	s.mu.Unlock()
+}
+
 func (s *Server) runMiddlewares(conn *Conn) error {
 	return s.middlewares.Run(conn)
 }
@@ -169,4 +193,14 @@ func normalizeNamespace(name string) string {
 		cleaned = "/" + cleaned
 	}
 	return cleaned
+}
+
+func (s *Server) checkAllowRequest(r *http.Request) error {
+	s.mu.RLock()
+	fn := s.allowRequest
+	s.mu.RUnlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(r)
 }

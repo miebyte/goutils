@@ -70,6 +70,7 @@ type Socket interface {
 	ID() string
 	Namespace() string
 	Context() context.Context
+	Request() *http.Request
 	On(string, MessageHandler)
 	Join(string) error
 	Leave(string)

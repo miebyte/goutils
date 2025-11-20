@@ -1,6 +1,7 @@
 package websocketutils
 
 import (
+	"context"
 	"net/http"
 	"path"
 	"strings"
@@ -16,7 +17,6 @@ const (
 	defaultPongTimeout  = 60 * time.Second
 )
 
-// Server 是具备命名空间能力的 WebSocket 服务器。
 type Server struct {
 	upgrader    websocket.Upgrader
 	mu          sync.RWMutex
@@ -26,18 +26,15 @@ type Server struct {
 	pingInterval time.Duration
 	pongTimeout  time.Duration
 
-	allowRequest AllowRequestFunc
+	handshake HandshakeFunc
 
 	pathPrefix string
 }
 
-// ServerOption 用于自定义 Server。
 type ServerOption func(*Server)
 
-// AllowRequestFunc 用于在握手阶段决定是否允许请求。
-type AllowRequestFunc func(r *http.Request) error
+type HandshakeFunc func(r *http.Request) (context.Context, error)
 
-// NewServer 创建一个新的 Server。
 func NewServer(opts ...ServerOption) *Server {
 	srv := &Server{
 		upgrader: websocket.Upgrader{
@@ -83,10 +80,10 @@ func WithHeartbeat(pingInterval, pongTimeout time.Duration) ServerOption {
 	}
 }
 
-// WithAllowRequest 配置握手校验函数。
-func WithAllowRequest(fn AllowRequestFunc) ServerOption {
+// WithHandshake 配置握手校验函数。
+func WithHandshake(fn HandshakeFunc) ServerOption {
 	return func(s *Server) {
-		s.SetAllowRequest(fn)
+		s.SetHandshake(fn)
 	}
 }
 
@@ -101,10 +98,14 @@ func WithPrefix(prefix string) ServerOption {
 // Server 会根据请求的 URL 解析出一个命名空间并自动加入
 // 每个 socket 都会自动加入一个由其自己的 id 标识的房间。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if err := s.checkAllowRequest(r); err != nil {
+	ctx, err := s.checkHandshake(r)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
 		logging.Warnf("websocket request rejected: path=%s err=%v", r.URL.Path, err)
 		return
+	}
+	if ctx != nil {
+		r = r.WithContext(ctx)
 	}
 
 	nsPath := s.namespacePath(r.URL.Path)
@@ -182,10 +183,10 @@ func (s *Server) heartbeatConfig() (time.Duration, time.Duration) {
 	return s.pingInterval, s.pongTimeout
 }
 
-// SetAllowRequest 设置握手校验函数。
-func (s *Server) SetAllowRequest(fn AllowRequestFunc) {
+// SetHandshake 设置握手校验函数。
+func (s *Server) SetHandshake(fn HandshakeFunc) {
 	s.mu.Lock()
-	s.allowRequest = fn
+	s.handshake = fn
 	s.mu.Unlock()
 }
 
@@ -258,12 +259,12 @@ func (s *Server) namespacePath(requestPath string) string {
 	return trimmed
 }
 
-func (s *Server) checkAllowRequest(r *http.Request) error {
+func (s *Server) checkHandshake(r *http.Request) (context.Context, error) {
 	s.mu.RLock()
-	fn := s.allowRequest
+	fn := s.handshake
 	s.mu.RUnlock()
 	if fn == nil {
-		return nil
+		return nil, nil
 	}
 	return fn(r)
 }

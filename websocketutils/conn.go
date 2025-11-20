@@ -2,6 +2,7 @@ package websocketutils
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -77,11 +78,15 @@ func (c *Conn) Request() *http.Request {
 
 // Context 返回连接上下文。
 func (c *Conn) Context() context.Context {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.ctx
 }
 
 func (c *Conn) SetContext(ctx context.Context) {
+	c.mu.Lock()
 	c.ctx = ctx
+	c.mu.Unlock()
 }
 
 // On 绑定事件处理函数。
@@ -143,7 +148,6 @@ func (c *Conn) Close() error {
 			c.namespace.leaveRoom(room, c)
 		}
 
-		close(c.send)
 		err = c.ws.Close()
 	})
 	return err
@@ -212,7 +216,14 @@ func (c *Conn) dispatch(frame Frame) {
 		return
 	}
 	for _, handler := range handlers {
-		handler(c, frame.Data)
+		go func(h MessageHandler) {
+			defer func() {
+				if r := recover(); r != nil {
+					logging.Errorc(c.ctx, "handler panic: %v", r)
+				}
+			}()
+			h(c, frame.Data)
+		}(handler)
 	}
 }
 
@@ -222,6 +233,8 @@ func (c *Conn) sendFrame(data []byte) error {
 		return ErrConnClosed
 	case c.send <- data:
 		return nil
+	default:
+		return errors.New("websocketutils: connection buffer full")
 	}
 }
 

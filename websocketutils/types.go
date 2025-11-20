@@ -41,7 +41,8 @@ type Emitter interface {
 // TargetEmitter 支持链式房间广播。
 type TargetEmitter interface {
 	Emitter
-	To(string) TargetEmitter
+	EmitExcept(event string, payload any, socket Socket) error
+	To(...string) TargetEmitter
 }
 
 // NamespaceAPI 抽象 On/Use/Emit 能力。
@@ -53,7 +54,7 @@ type NamespaceAPI interface {
 	// Use 增加中间件。
 	Use(Middleware)
 	// To 返回房间广播器。
-	To(string) TargetEmitter
+	To(...string) TargetEmitter
 }
 
 // ServerAPI 抽象命名空间能力与 http.Handler。

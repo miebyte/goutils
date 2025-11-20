@@ -35,9 +35,9 @@ type Conn struct {
 	pongTimeout  time.Duration
 }
 
-func newConn(ns *Namespace, ws *websocket.Conn, req *http.Request) *Conn {
+func newConn(ctx context.Context, ns *Namespace, ws *websocket.Conn, req *http.Request) *Conn {
 	id := nextConnID()
-	ctx, cancel := context.WithCancel(logging.CloneContext(req.Context()))
+	ctx, cancel := context.WithCancel(ctx)
 	ctx = logging.With(ctx, "ConnID", id)
 	pingInterval, pongTimeout := ns.server.heartbeatConfig()
 	c := &Conn{
@@ -158,19 +158,19 @@ func (c *Conn) readLoop() {
 		var frame Frame
 		if err := c.ws.ReadJSON(&frame); err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-				logging.Errorc(c.ctx, "read json error: %v", err)
+				websocketLogger.Errorc(c.ctx, "read json error: %v", err)
 			} else {
-				logging.Infoc(c.ctx, "connection closed")
+				websocketLogger.Infoc(c.ctx, "connection closed")
 			}
 			break
 		}
 
 		if frame.Event == "" {
-			logging.Warnc(c.ctx, "read empty event")
+			websocketLogger.Warnc(c.ctx, "read empty event")
 			continue
 		}
 
-		logging.Debugc(c.ctx, "read event=%s", logging.JsonifyNoIndent(frame))
+		websocketLogger.Debugc(c.ctx, "read event=%s", logging.JsonifyNoIndent(frame))
 		c.dispatch(frame)
 	}
 	_ = c.Close()
@@ -200,7 +200,7 @@ func (c *Conn) writeLoop() {
 			}
 		case <-pingC:
 			if err := c.sendPing(); err != nil {
-				logging.Warnc(c.ctx, "send ping error: %v", err)
+				websocketLogger.Warnc(c.ctx, "send ping error: %v", err)
 				_ = c.Close()
 				return
 			}
@@ -219,7 +219,7 @@ func (c *Conn) dispatch(frame Frame) {
 		go func(h MessageHandler) {
 			defer func() {
 				if r := recover(); r != nil {
-					logging.Errorc(c.ctx, "handler panic: %v", r)
+					websocketLogger.Errorc(c.ctx, "handler panic: %v", r)
 				}
 			}()
 			h(c, frame.Data)
@@ -255,11 +255,11 @@ func (c *Conn) setupHeartbeat() {
 		return
 	}
 	if err := c.refreshReadDeadline(); err != nil {
-		logging.Warnc(c.ctx, "set read deadline error: %v", err)
+		websocketLogger.Warnc(c.ctx, "set read deadline error: %v", err)
 	}
 	c.ws.SetPongHandler(func(string) error {
 		if err := c.refreshReadDeadline(); err != nil {
-			logging.Warnc(c.ctx, "refresh read deadline error: %v", err)
+			websocketLogger.Warnc(c.ctx, "refresh read deadline error: %v", err)
 			return err
 		}
 		return nil
@@ -277,7 +277,7 @@ func (c *Conn) sendPing() error {
 	if c.pingInterval <= 0 {
 		return nil
 	}
-	logging.Debugc(c.ctx, "sending ping")
+	websocketLogger.Debugc(c.ctx, "sending ping")
 	return c.ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(pingWriteWait))
 }
 

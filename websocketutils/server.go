@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/miebyte/goutils/logging"
 )
 
 const (
@@ -101,9 +100,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, err := s.checkHandshake(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusForbidden)
-		logging.Warnf("websocket request rejected: path=%s err=%v", r.URL.Path, err)
+		websocketLogger.Warnf("websocket request rejected: path=%s err=%v", r.URL.Path, err)
 		return
 	}
+
 	if ctx != nil {
 		r = r.WithContext(ctx)
 	}
@@ -112,7 +112,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	namespace := s.getNamespace(nsPath)
 	if namespace == nil {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		logging.Warnf("websocket namespace not found: path=%s ns=%s", r.URL.Path, nsPath)
+		websocketLogger.Warnc(ctx, "websocket namespace not found: path=%s ns=%s", r.URL.Path, nsPath)
 		return
 	}
 	conn, err := s.upgrader.Upgrade(w, r, nil)
@@ -120,7 +120,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	socket := newConn(namespace, conn, r)
+	socket := newConn(ctx, namespace, conn, r)
 	if err := s.runMiddlewares(socket); err != nil {
 		_ = socket.Close()
 		return
@@ -152,8 +152,8 @@ func (s *Server) Emit(event string, payload any) error {
 }
 
 // To 代理默认命名空间的房间广播器。
-func (s *Server) To(room string) TargetEmitter {
-	return s.Of("/").To(room)
+func (s *Server) To(rooms ...string) TargetEmitter {
+	return s.Of("/").To(rooms...)
 }
 
 // Of 返回一个命名空间
@@ -172,7 +172,7 @@ func (s *Server) Of(name string) *Namespace {
 	if ns == nil {
 		ns = newNamespace(s, normalized)
 		s.namespaces[normalized] = ns
-		logging.Infof("created namespace: %s", normalized)
+		websocketLogger.Infof("created namespace: %s", normalized)
 	}
 	return ns
 }

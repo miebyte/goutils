@@ -2,6 +2,7 @@ package websocketutils
 
 import (
 	"maps"
+	"slices"
 	"sync"
 )
 
@@ -59,10 +60,10 @@ func (n *Namespace) Emit(event string, payload any) error {
 }
 
 // To 返回房间广播器。
-func (n *Namespace) To(room string) TargetEmitter {
+func (n *Namespace) To(rooms ...string) TargetEmitter {
 	return (&roomEmitter{
 		namespace: n,
-	}).To(room)
+	}).To(rooms...)
 }
 
 // Room 返回指定房间，没有则创建。
@@ -97,7 +98,7 @@ func (n *Namespace) leaveRoom(name string, conn *Conn) {
 func (n *Namespace) handlersSnapshot(event string) []EventHandler {
 	n.handlerMu.RLock()
 	defer n.handlerMu.RUnlock()
-	return append([]EventHandler(nil), n.handlers[event]...)
+	return slices.Clone(n.handlers[event])
 }
 
 // roomEmitter 实现 TargetEmitter。
@@ -107,16 +108,21 @@ type roomEmitter struct {
 }
 
 // To 追加房间目标。
-func (r *roomEmitter) To(room string) TargetEmitter {
-	if r == nil || room == "" {
+func (r *roomEmitter) To(rooms ...string) TargetEmitter {
+	if r == nil || len(rooms) == 0 {
 		return r
 	}
-	r.targets = append(r.targets, room)
+	r.targets = append(r.targets, rooms...)
 	return r
 }
 
 // Emit 将事件发送到指定房间。
 func (r *roomEmitter) Emit(event string, payload any) error {
+	return r.EmitExcept(event, payload, nil)
+}
+
+// EmitExcept 在广播时排除指定连接。
+func (r *roomEmitter) EmitExcept(event string, payload any, socket Socket) error {
 	if r == nil || r.namespace == nil {
 		return ErrNoSuchRoom
 	}
@@ -146,6 +152,10 @@ func (r *roomEmitter) Emit(event string, payload any) error {
 		room.mu.RLock()
 		maps.Copy(recipients, room.members)
 		room.mu.RUnlock()
+	}
+
+	if socket != nil {
+		delete(recipients, socket.ID())
 	}
 
 	buffer := make([]*Conn, 0, len(recipients))

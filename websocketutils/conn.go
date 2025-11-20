@@ -80,6 +80,10 @@ func (c *Conn) Context() context.Context {
 	return c.ctx
 }
 
+func (c *Conn) SetContext(ctx context.Context) {
+	c.ctx = ctx
+}
+
 // On 绑定事件处理函数。
 func (c *Conn) On(event string, handler MessageHandler) {
 	if event == "" || handler == nil {

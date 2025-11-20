@@ -27,6 +27,8 @@ type Server struct {
 	pongTimeout  time.Duration
 
 	allowRequest AllowRequestFunc
+
+	pathPrefix string
 }
 
 // ServerOption 用于自定义 Server。
@@ -88,6 +90,13 @@ func WithAllowRequest(fn AllowRequestFunc) ServerOption {
 	}
 }
 
+// WithPrefix 配置监听路径前缀。
+func WithPrefix(prefix string) ServerOption {
+	return func(s *Server) {
+		s.pathPrefix = normalizePrefix(prefix)
+	}
+}
+
 // ServeHTTP 实现 http.Handler。
 // Server 会根据请求的 URL 解析出一个命名空间并自动加入
 // 每个 socket 都会自动加入一个由其自己的 id 标识的房间。
@@ -97,12 +106,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		logging.Warnf("websocket request rejected: path=%s err=%v", r.URL.Path, err)
 		return
 	}
+
+	nsPath := s.namespacePath(r.URL.Path)
+	namespace := s.getNamespace(nsPath)
+	if namespace == nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		logging.Warnf("websocket namespace not found: path=%s ns=%s", r.URL.Path, nsPath)
+		return
+	}
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 
-	namespace := s.Of(r.URL.Path)
 	socket := newConn(namespace, conn, r)
 	if err := s.runMiddlewares(socket); err != nil {
 		_ = socket.Close()
@@ -193,6 +209,53 @@ func normalizeNamespace(name string) string {
 		cleaned = "/" + cleaned
 	}
 	return cleaned
+}
+
+func normalizePrefix(prefix string) string {
+	trimmed := strings.TrimSpace(prefix)
+	if trimmed == "" || trimmed == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		trimmed = "/" + trimmed
+	}
+	trimmed = strings.TrimRight(trimmed, "/")
+	if trimmed == "" || trimmed == "/" {
+		return ""
+	}
+	return trimmed
+}
+
+func (s *Server) getNamespace(name string) *Namespace {
+	normalized := normalizeNamespace(name)
+	s.mu.RLock()
+	ns := s.namespaces[normalized]
+	s.mu.RUnlock()
+	return ns
+}
+
+func (s *Server) namespacePath(requestPath string) string {
+	if requestPath == "" {
+		return "/"
+	}
+	prefix := s.pathPrefix
+	if prefix == "" {
+		return requestPath
+	}
+	if !strings.HasPrefix(requestPath, prefix) {
+		return requestPath
+	}
+	if len(requestPath) > len(prefix) && requestPath[len(prefix)] != '/' {
+		return requestPath
+	}
+	trimmed := strings.TrimPrefix(requestPath, prefix)
+	if trimmed == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		trimmed = "/" + trimmed
+	}
+	return trimmed
 }
 
 func (s *Server) checkAllowRequest(r *http.Request) error {

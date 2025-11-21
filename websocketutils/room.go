@@ -7,14 +7,14 @@ type Room struct {
 	name      string
 	namespace *Namespace
 	mu        sync.RWMutex
-	members   map[string]*Conn
+	members   map[string]connection
 }
 
 func newRoom(ns *Namespace, name string) *Room {
 	return &Room{
 		name:      name,
 		namespace: ns,
-		members:   make(map[string]*Conn),
+		members:   make(map[string]connection),
 	}
 }
 
@@ -45,9 +45,9 @@ func (r *Room) emit(event string, payload any, exclude string) error {
 	return r.namespace.hub.Deliver(data, r.receivers(exclude))
 }
 
-func (r *Room) add(conn *Conn) {
+func (r *Room) add(conn connection) {
 	r.mu.Lock()
-	r.members[conn.id] = conn
+	r.members[conn.ID()] = conn
 	r.mu.Unlock()
 }
 
@@ -59,10 +59,10 @@ func (r *Room) remove(connID string) bool {
 	return empty
 }
 
-func (r *Room) receivers(exclude string) []*Conn {
+func (r *Room) receivers(exclude string) []connection {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	receivers := make([]*Conn, 0, len(r.members))
+	receivers := make([]connection, 0, len(r.members))
 	for id, conn := range r.members {
 		if exclude != "" && id == exclude {
 			continue

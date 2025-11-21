@@ -1,84 +1,82 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
+	"log"
+	"net/url"
+	"os"
+	"os/signal"
+	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/miebyte/goutils/flags"
-	"github.com/miebyte/goutils/ginutils"
-	"github.com/miebyte/goutils/logging"
 )
 
-var (
-	ports = flags.Int("port", 8081, "port")
-)
-
-type frame struct {
+type Frame struct {
 	Event string          `json:"event"`
 	Data  json.RawMessage `json:"data,omitempty"`
 }
 
 func main() {
-	flags.Parse()
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws://localhost:8080/orders", nil)
+	u := url.URL{Scheme: "ws", Host: "localhost:8080", Path: "/orders"}
+	log.Printf("connecting to %s", u.String())
+
+	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
-		panic(err)
+		log.Fatal("dial:", err)
 	}
-	defer conn.Close()
+	defer c.Close()
 
-	go readLoop(context.Background(), conn)
+	done := make(chan struct{})
 
-	engine := ginutils.Default()
-	engine.GET("/join", func(c *gin.Context) {
-		room := c.Query("room")
-		if room == "" {
-			room = "orders"
-		}
-		sendFrame(conn, "join", map[string]string{"room": room})
-	})
-
-	engine.GET("/broadcast", func(c *gin.Context) {
-		sendFrame(conn, "broadcast", map[string]string{
-			"message": "hello all orders clients",
-		})
-	})
-
-	logging.PanicError(engine.Run(fmt.Sprintf(":%d", ports())))
-}
-
-func readLoop(ctx context.Context, conn *websocket.Conn) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			var f frame
-			if err := conn.ReadJSON(&f); err != nil {
-				logging.Errorf("read error: %v", err)
+	go func() {
+		defer close(done)
+		for {
+			_, message, err := c.ReadMessage()
+			if err != nil {
+				log.Println("read:", err)
 				return
 			}
-			logging.Infof("event=%s payload=%s", f.Event, string(f.Data))
+			log.Printf("recv: %s", message)
 		}
-	}
-}
+	}()
 
-func sendFrame(conn *websocket.Conn, event string, payload any) {
-	msg := frame{Event: event}
-	if payload != nil {
-		data, err := json.Marshal(payload)
+	// Join room
+	joinPayload := map[string]string{"room": "room1"}
+	joinBytes, _ := json.Marshal(joinPayload)
+	joinFrame := Frame{Event: "join", Data: joinBytes}
+	joinMsg, _ := json.Marshal(joinFrame)
+	err = c.WriteMessage(websocket.TextMessage, joinMsg)
+	if err != nil {
+		log.Println("write join:", err)
+		return
+	}
+
+	// Broadcast
+	time.Sleep(time.Second)
+	broadcastFrame := Frame{Event: "broadcast", Data: nil}
+	broadcastMsg, _ := json.Marshal(broadcastFrame)
+	err = c.WriteMessage(websocket.TextMessage, broadcastMsg)
+	if err != nil {
+		log.Println("write broadcast:", err)
+		return
+	}
+
+	select {
+	case <-interrupt:
+		log.Println("interrupt")
+		err := c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		if err != nil {
-			logging.Errorf("marshal error: %v", err)
+			log.Println("write close:", err)
 			return
 		}
-		msg.Data = data
-	}
-	if err := conn.WriteJSON(msg); err != nil {
-		logging.Errorf("write error: %v", err)
-	} else {
-		logging.Infof("sent event=%s", event)
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+	case <-time.After(5 * time.Second):
+		log.Println("test finished")
 	}
 }

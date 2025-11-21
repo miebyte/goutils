@@ -2,24 +2,31 @@ package websocketutils
 
 import "sync"
 
+type connection interface {
+	Socket
+	SendFrame([]byte) error
+	addRoom(string)
+	removeRoom(string)
+}
+
 // connHub 管理命名空间内的所有连接。
 type connHub struct {
 	mu    sync.RWMutex
-	conns map[string]*Conn
+	conns map[string]connection
 }
 
 func newConnHub() *connHub {
 	return &connHub{
-		conns: make(map[string]*Conn),
+		conns: make(map[string]connection),
 	}
 }
 
-func (h *connHub) Add(conn *Conn) {
+func (h *connHub) Add(conn connection) {
 	if conn == nil {
 		return
 	}
 	h.mu.Lock()
-	h.conns[conn.id] = conn
+	h.conns[conn.ID()] = conn
 	h.mu.Unlock()
 }
 
@@ -32,17 +39,17 @@ func (h *connHub) Remove(connID string) {
 	h.mu.Unlock()
 }
 
-func (h *connHub) Snapshot() []*Conn {
+func (h *connHub) Snapshot() []connection {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	receivers := make([]*Conn, 0, len(h.conns))
+	receivers := make([]connection, 0, len(h.conns))
 	for _, conn := range h.conns {
 		receivers = append(receivers, conn)
 	}
 	return receivers
 }
 
-func (h *connHub) Deliver(frame []byte, receivers []*Conn) error {
+func (h *connHub) Deliver(frame []byte, receivers []connection) error {
 	if len(receivers) == 0 {
 		return nil
 	}
@@ -51,7 +58,7 @@ func (h *connHub) Deliver(frame []byte, receivers []*Conn) error {
 		if conn == nil {
 			continue
 		}
-		if err := conn.sendFrame(frame); err != nil && firstErr == nil {
+		if err := conn.SendFrame(frame); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -86,7 +93,7 @@ func (r *roomRegistry) GetOrCreate(name string) *Room {
 	return room
 }
 
-func (r *roomRegistry) Join(name string, conn *Conn) error {
+func (r *roomRegistry) Join(name string, conn connection) error {
 	room := r.GetOrCreate(name)
 	if room == nil {
 		return ErrNoSuchRoom
@@ -96,7 +103,7 @@ func (r *roomRegistry) Join(name string, conn *Conn) error {
 	return nil
 }
 
-func (r *roomRegistry) Leave(name string, conn *Conn) {
+func (r *roomRegistry) Leave(name string, conn connection) {
 	if name == "" || conn == nil {
 		return
 	}
@@ -106,7 +113,7 @@ func (r *roomRegistry) Leave(name string, conn *Conn) {
 	if room == nil {
 		return
 	}
-	empty := room.remove(conn.id)
+	empty := room.remove(conn.ID())
 	conn.removeRoom(name)
 	if empty {
 		r.mu.Lock()

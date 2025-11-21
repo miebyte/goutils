@@ -71,11 +71,11 @@ func (n *Namespace) Room(name string) *Room {
 	return n.rooms.GetOrCreate(name)
 }
 
-func (n *Namespace) runMiddlewares(conn *Conn) error {
+func (n *Namespace) runMiddlewares(conn Socket) error {
 	return n.middlewares.Run(conn)
 }
 
-func (n *Namespace) attachConnection(conn *Conn) {
+func (n *Namespace) attachConnection(conn connection) {
 	n.hub.Add(conn)
 	handlers := n.handlersSnapshot(EventConnection)
 	for _, handler := range handlers {
@@ -83,15 +83,15 @@ func (n *Namespace) attachConnection(conn *Conn) {
 	}
 }
 
-func (n *Namespace) detachConnection(conn *Conn) {
-	n.hub.Remove(conn.id)
+func (n *Namespace) detachConnection(conn connection) {
+	n.hub.Remove(conn.ID())
 }
 
-func (n *Namespace) joinRoom(name string, conn *Conn) error {
+func (n *Namespace) joinRoom(name string, conn connection) error {
 	return n.rooms.Join(name, conn)
 }
 
-func (n *Namespace) leaveRoom(name string, conn *Conn) {
+func (n *Namespace) leaveRoom(name string, conn connection) {
 	n.rooms.Leave(name, conn)
 }
 
@@ -147,7 +147,7 @@ func (r *roomEmitter) EmitExcept(event string, payload any, socket Socket) error
 		return ErrNoSuchRoom
 	}
 
-	recipients := make(map[string]*Conn)
+	recipients := make(map[string]connection)
 	for _, room := range rooms {
 		room.mu.RLock()
 		maps.Copy(recipients, room.members)
@@ -158,7 +158,7 @@ func (r *roomEmitter) EmitExcept(event string, payload any, socket Socket) error
 		delete(recipients, socket.ID())
 	}
 
-	buffer := make([]*Conn, 0, len(recipients))
+	buffer := make([]connection, 0, len(recipients))
 	for _, conn := range recipients {
 		buffer = append(buffer, conn)
 	}

@@ -120,7 +120,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	socket := newConn(ctx, namespace, conn, r)
+	transport := &WebSocketTransport{conn: conn}
+	socket := newSocket(r.Context(), namespace, transport, r)
 	if err := s.runMiddlewares(socket); err != nil {
 		_ = socket.Close()
 		return
@@ -190,7 +191,7 @@ func (s *Server) SetHandshake(fn HandshakeFunc) {
 	s.mu.Unlock()
 }
 
-func (s *Server) runMiddlewares(conn *Conn) error {
+func (s *Server) runMiddlewares(conn Socket) error {
 	return s.middlewares.Run(conn)
 }
 

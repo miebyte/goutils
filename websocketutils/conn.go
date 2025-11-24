@@ -3,340 +3,271 @@ package websocketutils
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/miebyte/goutils/logging"
-	cmap "github.com/orcaman/concurrent-map/v2"
 )
 
-const pingWriteWait = 5 * time.Second
+type outboundMessage struct {
+	messageType int
+	payload     []byte
+}
 
-// socket 实现了 Conn 接口，封装了 Transport 和业务逻辑
-type socket struct {
+// socketConn 表示单个 websocket 连接。
+// 一个 socketConn 仅属于一个命名空间，但是可以加入其中的多个房间。
+type socketConn struct {
 	id        string
-	namespace *Namespace
+	namespace *namespace
 	transport Transport
-	req       *http.Request
-
-	sendCh      chan []byte
-	middlewares middlewareChain
-	handlers    cmap.ConcurrentMap[string, []EventHandler]
-	rooms       cmap.ConcurrentMap[string, struct{}]
-	keys        cmap.ConcurrentMap[string, any]
-
-	closeOnce sync.Once
-	closed    chan struct{}
+	request   *http.Request
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	pingInterval time.Duration
-	pongTimeout  time.Duration
+	send chan outboundMessage
+
+	handlersMu sync.RWMutex
+	handlers   map[string][]EventHandler
+
+	roomsMu sync.RWMutex
+	rooms   map[string]struct{}
+
+	closeOnce sync.Once
+	closed    chan struct{}
+	wg        sync.WaitGroup
 }
 
-func newSocket(ctx context.Context, ns *Namespace, transport Transport, req *http.Request) *socket {
-	id := nextConnID()
-	ctx, cancel := context.WithCancel(ctx)
-	ctx = logging.With(ctx, "ConnID", id)
-	pingInterval, pongTimeout := ns.server.heartbeatConfig()
-
-	s := &socket{
-		id:           id,
-		namespace:    ns,
-		transport:    transport,
-		req:          req,
-		sendCh:       make(chan []byte, 16),
-		handlers:     cmap.New[[]EventHandler](),
-		rooms:        cmap.New[struct{}](),
-		keys:         cmap.New[any](),
-		closed:       make(chan struct{}),
-		ctx:          ctx,
-		cancel:       cancel,
-		pingInterval: pingInterval,
-		pongTimeout:  pongTimeout,
-	}
-
-	s.setupHeartbeat()
-	go s.readLoop()
-	go s.writeLoop()
-	return s
-}
-
-// ID 返回连接 ID。
-func (s *socket) ID() string {
-	return s.id
-}
-
-// Namespace 返回命名空间。
-func (s *socket) Namespace() NamespaceAPI {
-	return s.namespace
-}
-
-// Request 返回握手请求。
-func (s *socket) Request() *http.Request {
-	return s.req
-}
-
-// Context 返回连接上下文。
-func (s *socket) Context() context.Context {
-	return s.ctx
-}
-
-func (s *socket) SetContext(ctx context.Context) {
-	s.ctx = ctx
-}
-
-// Set 存储键值对。
-func (s *socket) Set(key string, value any) {
-	s.keys.Set(key, value)
-}
-
-// Get 获取键值对。
-func (s *socket) Get(key string) (any, bool) {
-	return s.keys.Get(key)
-}
-
-// On 绑定事件处理函数。
-func (s *socket) On(event string, handler EventHandler) {
-	if event == "" || handler == nil {
-		return
-	}
-	s.handlers.Upsert(event, []EventHandler{handler}, func(exist bool, oldVal []EventHandler, newVal []EventHandler) []EventHandler {
-		return append(oldVal, newVal...)
-	})
-}
-
-// Use 增加中间件。
-func (s *socket) Use(mw Middleware) {
-	s.middlewares.Add(mw)
-}
-
-// To 返回房间广播器。
-func (s *socket) To(rooms ...string) TargetEmitter {
-	return (&roomEmitter{
-		namespace: s.namespace,
-		except:    s,
-	}).To(rooms...)
-}
-
-// Emit 发送事件。
-func (s *socket) Emit(event string, payload any) error {
-	frame, err := encodeFrame(event, payload)
-	if err != nil {
-		return err
-	}
-	return s.SendFrame(frame)
-}
-
-// Join 将连接加入房间。
-func (s *socket) Join(room string) error {
-	if room == "" {
-		return ErrNoSuchRoom
-	}
-	return s.namespace.joinRoom(room, s)
-}
-
-// Leave 将连接移出房间。
-func (s *socket) Leave(room string) {
-	if room == "" {
-		return
-	}
-	s.namespace.leaveRoom(room, s)
-}
-
-// Rooms 返回当前连接所在的房间列表。
-func (s *socket) Rooms() []string {
-	return s.rooms.Keys()
-}
-
-// Close 关闭连接。
-func (s *socket) Close() error {
-	var err error
-	s.closeOnce.Do(func() {
-		close(s.closed)
-		s.cancel()
-		s.namespace.detachConnection(s)
-
-		rooms := s.Rooms()
-		for _, room := range rooms {
-			s.namespace.leaveRoom(room, s)
+func newSocketConn(ns *namespace, transport Transport, req *http.Request, queueSize int) *socketConn {
+	parent := context.Background()
+	if req != nil {
+		if ctx := req.Context(); ctx != nil {
+			parent = ctx
 		}
+	}
+	baseCtx, cancel := context.WithCancel(parent)
+	if queueSize <= 0 {
+		queueSize = defaultSendQueueSize
+	}
+	return &socketConn{
+		id:        uuid.NewString(),
+		namespace: ns,
+		transport: transport,
+		request:   req,
+		ctx:       baseCtx,
+		cancel:    cancel,
+		send:      make(chan outboundMessage, queueSize),
+		handlers:  make(map[string][]EventHandler),
+		rooms:     make(map[string]struct{}),
+		closed:    make(chan struct{}),
+	}
+}
 
-		err = s.transport.Close()
+func (c *socketConn) ID() string {
+	return c.id
+}
+
+func (c *socketConn) Request() *http.Request {
+	return c.request
+}
+
+func (c *socketConn) Close() error {
+	var err error
+	c.closeOnce.Do(func() {
+		c.cancel()
+		close(c.closed)
+		c.leaveAllRooms()
+		if c.namespace != nil {
+			c.namespace.removeConn(c.id)
+			c.namespace.dispatch(EventDisconnect, c, nil)
+		}
+		close(c.send)
+		if c.transport != nil {
+			if closeErr := c.transport.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}
 	})
 	return err
 }
 
-func (s *socket) readLoop() {
-	defer s.Close()
-	for {
-		frame, err := s.transport.Read()
+func (c *socketConn) Namespace() NamespaceAPI {
+	return c.namespace
+}
+
+func (c *socketConn) SendFrame(data []byte) error {
+	return c.enqueue(outboundMessage{
+		messageType: websocket.TextMessage,
+		payload:     data,
+	})
+}
+
+func (c *socketConn) Emit(event string, payload any) error {
+	if event == "" {
+		return nil
+	}
+	frame := Frame{Event: event}
+	if payload != nil {
+		raw, err := json.Marshal(payload)
 		if err != nil {
-			if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-				s.namespace.onError(s, err)
-			} else {
-				websocketLogger.Infoc(s.ctx, "connection closed")
-			}
-			return
+			return err
 		}
-
-		if frame.Event == "" {
-			websocketLogger.Warnc(s.ctx, "read empty event")
-			continue
-		}
-
-		websocketLogger.Debugc(s.ctx, "read event=%s", logging.JsonifyNoIndent(frame))
-		s.dispatch(frame)
+		frame.Data = raw
 	}
+	data, err := json.Marshal(frame)
+	if err != nil {
+		return err
+	}
+	return c.enqueue(outboundMessage{
+		messageType: websocket.TextMessage,
+		payload:     data,
+	})
 }
 
-func (s *socket) writeLoop() {
-	var (
-		ticker *time.Ticker
-		pingC  <-chan time.Time
-	)
-	if s.pingInterval > 0 {
-		ticker = time.NewTicker(s.pingInterval)
-		pingC = ticker.C
-		defer ticker.Stop()
-	}
-
-	defer s.Close()
-
-	for {
-		select {
-		case <-s.closed:
-			return
-		case payload, ok := <-s.sendCh:
-			if !ok {
-				return
-			}
-			if err := s.transport.Write(websocket.TextMessage, payload); err != nil {
-				s.namespace.onError(s, err)
-				return
-			}
-		case <-pingC:
-			if err := s.sendPing(); err != nil {
-				s.namespace.onError(s, err)
-				return
-			}
-		}
-	}
-}
-
-func (s *socket) dispatch(frame *Frame) {
-	handlers, _ := s.handlers.Get(frame.Event)
-
-	if len(handlers) == 0 {
+func (c *socketConn) On(event string, handler EventHandler) {
+	if event == "" || handler == nil {
 		return
 	}
-
-	wrapper := &socketWrapper{
-		Conn: s,
-		ctx:  context.WithValue(s.Context(), dataKey, frame.Data),
-	}
-
-	if err := s.middlewares.Run(wrapper); err != nil {
-		s.namespace.onError(s, err)
-		return
-	}
-
-	for _, handler := range handlers {
-		go func(h EventHandler) {
-			defer func() {
-				if r := recover(); r != nil {
-					s.namespace.onError(s, fmt.Errorf("handler panic: %v", r))
-				}
-			}()
-			h(wrapper)
-		}(handler)
-	}
+	c.handlersMu.Lock()
+	c.handlers[event] = append(c.handlers[event], handler)
+	c.handlersMu.Unlock()
 }
 
-type dataKeyType struct{}
-
-var dataKey dataKeyType
-
-// GetFrameData 获取当前事件帧数据。
-func GetFrameData(s Conn) json.RawMessage {
-	if v := s.Context().Value(dataKey); v != nil {
-		if data, ok := v.(json.RawMessage); ok {
-			return data
-		}
+func (c *socketConn) Join(room string) error {
+	if room == "" {
+		return nil
+	}
+	c.roomsMu.Lock()
+	if _, exists := c.rooms[room]; exists {
+		c.roomsMu.Unlock()
+		return nil
+	}
+	c.rooms[room] = struct{}{}
+	c.roomsMu.Unlock()
+	if rm := c.namespace.Room(room); rm != nil {
+		rm.Add(c)
 	}
 	return nil
 }
 
-type socketWrapper struct {
-	Conn
-	ctx context.Context
-}
-
-func (w *socketWrapper) Context() context.Context {
-	return w.ctx
-}
-
-func (w *socketWrapper) SetContext(ctx context.Context) {
-	w.ctx = ctx
-}
-
-// SendFrame 实现 FrameSender 接口
-func (s *socket) SendFrame(data []byte) error {
-	select {
-	case <-s.closed:
-		return ErrConnClosed
-	case s.sendCh <- data:
-		return nil
-	default:
-		return errors.New("websocketutils: connection buffer full")
-	}
-}
-
-func (s *socket) addRoom(name string) {
-	s.rooms.Set(name, struct{}{})
-}
-
-func (s *socket) removeRoom(name string) {
-	s.rooms.Remove(name)
-}
-
-func (s *socket) setupHeartbeat() {
-	if s.pongTimeout <= 0 {
+func (c *socketConn) Leave(room string) {
+	if room == "" {
 		return
 	}
-	if err := s.refreshReadDeadline(); err != nil {
-		websocketLogger.Warnc(s.ctx, "set read deadline error: %v", err)
+	c.roomsMu.Lock()
+	if _, exists := c.rooms[room]; !exists {
+		c.roomsMu.Unlock()
+		return
 	}
-	s.transport.SetPongHandler(func(string) error {
-		if err := s.refreshReadDeadline(); err != nil {
-			websocketLogger.Warnc(s.ctx, "refresh read deadline error: %v", err)
-			return err
+	delete(c.rooms, room)
+	c.roomsMu.Unlock()
+	if rm := c.namespace.getRoom(room); rm != nil {
+		rm.Remove(c)
+	}
+}
+
+func (c *socketConn) Rooms() []string {
+	c.roomsMu.RLock()
+	defer c.roomsMu.RUnlock()
+	if len(c.rooms) == 0 {
+		return nil
+	}
+	res := make([]string, 0, len(c.rooms))
+	for room := range c.rooms {
+		res = append(res, room)
+	}
+	return res
+}
+
+func (c *socketConn) Context() context.Context {
+	return c.ctx
+}
+
+func (c *socketConn) run() {
+	c.wg.Add(1)
+
+	go c.writeLoop()
+	c.readLoop()
+	c.Close()
+	c.wg.Wait()
+}
+
+func (c *socketConn) readLoop() {
+	for {
+		frame, err := c.transport.Read()
+		if err != nil {
+			Logger().Warnf("conn read loop stopped conn=%s err=%v", c.id, err)
+			return
 		}
-		return nil
-	})
+		if frame == nil || frame.Event == "" {
+			continue
+		}
+		c.handleFrame(frame)
+	}
 }
 
-func (s *socket) refreshReadDeadline() error {
-	if s.pongTimeout <= 0 {
+func (c *socketConn) writeLoop() {
+	defer c.wg.Done()
+	for msg := range c.send {
+		if err := c.transport.Write(msg.messageType, msg.payload); err != nil {
+			Logger().Warnf("conn write loop stopped conn=%s err=%v", c.id, err)
+			return
+		}
+	}
+}
+
+func (c *socketConn) handleFrame(frame *Frame) {
+	ctx := newEventContext(c.ctx, c, c.namespace, frame.Event, frame.Data)
+
+	if handlers := c.connHandlers(frame.Event); len(handlers) > 0 {
+		for _, h := range handlers {
+			callHandlerSafely(h, ctx)
+		}
+		return
+	}
+	c.namespace.dispatch(frame.Event, c, frame.Data)
+}
+
+func (c *socketConn) connHandlers(event string) []EventHandler {
+	c.handlersMu.RLock()
+	defer c.handlersMu.RUnlock()
+	handlers := c.handlers[event]
+	if len(handlers) == 0 {
 		return nil
 	}
-	return s.transport.SetReadDeadline(time.Now().Add(s.pongTimeout))
+	cloned := make([]EventHandler, len(handlers))
+	copy(cloned, handlers)
+	return cloned
 }
 
-func (s *socket) sendPing() error {
-	if s.pingInterval <= 0 {
-		return nil
+func (c *socketConn) enqueue(msg outboundMessage) error {
+	select {
+	case <-c.closed:
+		return ErrConnClosed
+	default:
 	}
-	websocketLogger.Debugc(s.ctx, "sending ping")
-	return s.transport.WriteControl(websocket.PingMessage, nil, time.Now().Add(pingWriteWait))
+	select {
+	case c.send <- msg:
+		return nil
+	default:
+		return ErrBufferFull
+	}
 }
 
-func nextConnID() string {
-	return uuid.NewString()
+func (c *socketConn) leaveAllRooms() {
+	c.roomsMu.Lock()
+	rooms := make([]string, 0, len(c.rooms))
+	for name := range c.rooms {
+		rooms = append(rooms, name)
+	}
+	c.rooms = make(map[string]struct{})
+	c.roomsMu.Unlock()
+	for _, room := range rooms {
+		if rm := c.namespace.getRoom(room); rm != nil {
+			rm.RemoveByID(c.id)
+		}
+	}
 }
+
+var _ Conn = (*socketConn)(nil)

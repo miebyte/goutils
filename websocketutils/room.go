@@ -1,61 +1,74 @@
 package websocketutils
 
-import (
-	cmap "github.com/orcaman/concurrent-map/v2"
-)
+import "sync"
 
-var _ RoomAPI = (*Room)(nil)
-
-type Room struct {
+// room 表示命名空间房间。
+type room struct {
 	name    string
-	ns      *Namespace
-	members cmap.ConcurrentMap[string, Conn]
+	mu      sync.RWMutex
+	members map[string]Conn
 }
 
-func newRoom(ns *Namespace, name string) *Room {
-	return &Room{
+func newRoom(name string) *room {
+	return &room{
 		name:    name,
-		ns:      ns,
-		members: cmap.New[Conn](),
+		members: make(map[string]Conn),
 	}
 }
 
-func (r *Room) Name() string {
+func (r *room) Name() string {
 	return r.name
 }
 
-// Broadcast 广播给房间成员
-func (r *Room) Broadcast(event string, data any) {
-	frame, err := encodeFrame(event, data)
-	if err != nil {
-		websocketLogger.Warnf("broadcast encode error: %v", err)
-		return
-	}
-
-	for _, conn := range r.members.Items() {
-		err = conn.SendFrame(frame)
-		if err != nil {
-			websocketLogger.Errorf("send frame error: %v", err)
+func (r *room) Broadcast(event string, data any) {
+	members := r.snapshot()
+	for _, conn := range members {
+		if err := conn.Emit(event, data); err != nil {
+			Logger().Errorf("room broadcast failed room=%s conn=%s event=%s err=%v", r.name, conn.ID(), event, err)
 		}
 	}
 }
 
-// Add 添加连接到房间
-func (r *Room) Add(conn Conn) {
-	r.members.Set(conn.ID(), conn)
-}
-
-// Remove 从房间移除连接
-func (r *Room) Remove(conn Conn) {
-	r.members.Remove(conn.ID())
-}
-
-// Members 返回房间成员列表
-func (r *Room) Members() []Conn {
-
-	members := make([]Conn, 0, r.members.Count())
-	for _, v := range r.members.Items() {
-		members = append(members, v)
+func (r *room) Add(conn Conn) {
+	if conn == nil {
+		return
 	}
-	return members
+	r.mu.Lock()
+	r.members[conn.ID()] = conn
+	r.mu.Unlock()
 }
+
+func (r *room) Remove(conn Conn) {
+	if conn == nil {
+		return
+	}
+	r.RemoveByID(conn.ID())
+}
+
+func (r *room) RemoveByID(id string) {
+	if id == "" {
+		return
+	}
+	r.mu.Lock()
+	delete(r.members, id)
+	r.mu.Unlock()
+}
+
+func (r *room) Members() []Conn {
+	return r.snapshot()
+}
+
+func (r *room) snapshot() []Conn {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.members) == 0 {
+		return nil
+	}
+	list := make([]Conn, 0, len(r.members))
+	for _, conn := range r.members {
+		list = append(list, conn)
+	}
+	return list
+}
+
+var _ RoomAPI = (*room)(nil)

@@ -1,201 +1,204 @@
 package websocketutils
 
 import (
-	"context"
 	"net/http"
+	"path"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/gorilla/websocket"
-	cmap "github.com/orcaman/concurrent-map/v2"
 )
 
 const (
-	defaultPingInterval = 25 * time.Second
-	defaultPongTimeout  = 60 * time.Second
+	defaultNamespaceName = "default"
+	defaultSendQueueSize = 64
 )
 
+// Option 定义 Server 可选项。
+type Option func(*Server)
+
+// Server 提供命名空间与房间管理。
 type Server struct {
-	upgrader     websocket.Upgrader
-	namespaces   cmap.ConcurrentMap[string, *Namespace]
-	pingInterval time.Duration
-	pongTimeout  time.Duration
-	handshake    HandshakeFunc
-	pathPrefix   string
+	mu              sync.RWMutex
+	namespaces      map[string]*namespace
+	upgrader        websocket.Upgrader
+	namespacePrefix string
+	sendQueueSize   int
 }
 
-type ServerOption func(*Server)
-
-type HandshakeFunc func(r *http.Request) (context.Context, error)
-
-func NewServer(opts ...ServerOption) *Server {
-	srv := &Server{
+// NewServer 创建一个 Server。
+func NewServer(opts ...Option) ServerAPI {
+	s := &Server{
+		namespaces: make(map[string]*namespace),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin: func(r *http.Request) bool {
+			CheckOrigin: func(*http.Request) bool {
 				return true
 			},
 		},
-		namespaces:   cmap.New[*Namespace](),
-		pingInterval: defaultPingInterval,
-		pongTimeout:  defaultPongTimeout,
+		sendQueueSize:   defaultSendQueueSize,
+		namespacePrefix: "/",
 	}
 	for _, opt := range opts {
 		if opt != nil {
-			opt(srv)
+			opt(s)
 		}
 	}
-	srv.Of("/")
-	return srv
+	return s
 }
 
-// WithUpgrader 替换默认 upgrader。
-func WithUpgrader(upgrader websocket.Upgrader) ServerOption {
+// WithCheckOrigin 自定义升级检查。
+func WithCheckOrigin(fn func(*http.Request) bool) Option {
 	return func(s *Server) {
-		s.upgrader = upgrader
-	}
-}
-
-// WithHeartbeat 配置服务端心跳与超时。
-func WithHeartbeat(pingInterval, pongTimeout time.Duration) ServerOption {
-	return func(s *Server) {
-		if pingInterval <= 0 || pongTimeout <= 0 {
-			s.pingInterval = 0
-			s.pongTimeout = 0
-			return
+		if fn != nil {
+			s.upgrader.CheckOrigin = fn
 		}
-		if pongTimeout <= pingInterval {
-			pongTimeout = pingInterval + time.Second
+	}
+}
+
+// WithReadBufferSize 设置升级器读缓冲大小。
+func WithReadBufferSize(size int) Option {
+	return func(s *Server) {
+		if size > 0 {
+			s.upgrader.ReadBufferSize = size
 		}
-		s.pingInterval = pingInterval
-		s.pongTimeout = pongTimeout
 	}
 }
 
-// WithHandshake 配置握手校验函数。
-func WithHandshake(fn HandshakeFunc) ServerOption {
+// WithWriteBufferSize 设置升级器写缓冲大小。
+func WithWriteBufferSize(size int) Option {
 	return func(s *Server) {
-		s.SetHandshake(fn)
+		if size > 0 {
+			s.upgrader.WriteBufferSize = size
+		}
 	}
 }
 
-// WithPrefix 配置监听路径前缀。
-func WithPrefix(prefix string) ServerOption {
+// WithSendQueueSize 设置连接发送缓冲大小。
+func WithSendQueueSize(size int) Option {
 	return func(s *Server) {
-		s.pathPrefix = normalizePrefix(prefix)
+		if size > 0 {
+			s.sendQueueSize = size
+		}
 	}
 }
 
-func (s *Server) Broadcast(event string, data any) {
-	for _, ns := range s.namespaces.Items() {
-		ns.Emit(event, data)
+// WithNamespacePrefix 设置命名空间路径前缀。
+func WithNamespacePrefix(prefix string) Option {
+	return func(s *Server) {
+		s.namespacePrefix = sanitizeNamespacePrefix(prefix)
 	}
 }
 
-func (s *Server) Use(middleware Middleware) {
-	for _, ns := range s.namespaces.Items() {
-		ns.Use(middleware)
+func (s *Server) normalizeNamespace(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.Trim(name, "/")
+	if name == "" {
+		return defaultNamespaceName
+	}
+	chunks := strings.Split(name, "/")
+	if len(chunks) > 0 && chunks[0] != "" {
+		return chunks[0]
+	}
+	return defaultNamespaceName
+}
+
+func (s *Server) getNamespace(name string) *namespace {
+	norm := s.normalizeNamespace(name)
+	s.mu.RLock()
+	ns, ok := s.namespaces[norm]
+	s.mu.RUnlock()
+	if ok {
+		return ns
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ns, ok = s.namespaces[norm]; ok {
+		return ns
+	}
+	ns = newNamespace(norm)
+	s.namespaces[norm] = ns
+	return ns
+}
+
+// Of 返回命名空间。
+func (s *Server) Of(name string) NamespaceAPI {
+	return s.getNamespace(name)
+}
+
+// Broadcast 广播到所有命名空间。
+func (s *Server) Broadcast(event string, payload any) {
+	s.mu.RLock()
+	namespaces := make([]*namespace, 0, len(s.namespaces))
+	for _, ns := range s.namespaces {
+		namespaces = append(namespaces, ns)
+	}
+	s.mu.RUnlock()
+	for _, ns := range namespaces {
+		if err := ns.Emit(event, payload); err != nil {
+			Logger().Errorf("namespace broadcast failed namespace=%s event=%s err=%v", ns.Name(), event, err)
+		}
 	}
 }
 
 // ServeHTTP 实现 http.Handler。
-// Server 会根据请求的 URL 解析出一个命名空间并自动加入
-// 每个 socket 都会自动加入一个由其自己的 id 标识的房间。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx, err := s.checkHandshake(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
-		websocketLogger.Warnf("websocket request rejected: path=%s err=%v", r.URL.Path, err)
-		return
-	}
-
-	if ctx != nil {
-		r = r.WithContext(ctx)
-	}
-
-	nsPath := s.namespacePath(r.URL.Path)
-	namespace := s.getNamespace(nsPath)
-	if namespace == nil {
-		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		websocketLogger.Warnc(ctx, "websocket namespace not found: path=%s ns=%s", r.URL.Path, nsPath)
-		return
-	}
+	nsName := s.namespaceFromPath(r.URL.Path)
+	ns := s.getNamespace(nsName)
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		Logger().Errorf("websocket upgrade failed err=%v", err)
 		return
 	}
-
-	transport := &WebSocketTransport{conn: conn}
-	socket := newSocket(r.Context(), namespace, transport, r)
-	if err := namespace.runMiddlewares(socket); err != nil {
-		_ = socket.Close()
-		return
+	transport := newWSTransport(conn)
+	socket := newSocketConn(ns, transport, r, s.sendQueueSize)
+	ns.addConn(socket)
+	if err := socket.Join(socket.ID()); err != nil {
+		Logger().Warnf("join self room failed conn=%s err=%v", socket.ID(), err)
 	}
-
-	// 每个 socket 都会自动加入一个由其自己的 id 标识的房间。
-	socket.Join(socket.ID())
-	// connection 事件处理
-	namespace.attachConnection(socket)
+	ns.dispatch(EventConnection, socket, nil)
+	socket.run()
 }
 
-// Of 返回一个命名空间
-// 如果命名空间不存在，则创建一个。
-func (s *Server) Of(name string) *Namespace {
-	normalized := normalizeNamespace(name)
-	ns, _ := s.namespaces.Get(normalized)
-	if ns != nil {
-		return ns
-	}
+var _ ServerAPI = (*Server)(nil)
 
-	ns = newNamespace(s, normalized)
-	s.namespaces.Set(normalized, ns)
-	websocketLogger.Infof("created namespace: %s", normalized)
-
-	return ns
-}
-
-func (s *Server) heartbeatConfig() (time.Duration, time.Duration) {
-	return s.pingInterval, s.pongTimeout
-}
-
-func (s *Server) SetHandshake(fn HandshakeFunc) {
-	s.handshake = fn
-}
-
-func (s *Server) checkHandshake(r *http.Request) (context.Context, error) {
-	if s.handshake == nil {
-		return nil, nil
-	}
-	return s.handshake(r)
-}
-
-func (s *Server) getNamespace(name string) *Namespace {
-	normalized := normalizeNamespace(name)
-	ns, _ := s.namespaces.Get(normalized)
-	return ns
-}
-
-func (s *Server) namespacePath(requestPath string) string {
-	if requestPath == "" {
-		return "/"
-	}
-	prefix := s.pathPrefix
+func sanitizeNamespacePrefix(prefix string) string {
+	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
-		return requestPath
-	}
-	if !strings.HasPrefix(requestPath, prefix) {
-		return requestPath
-	}
-	if len(requestPath) > len(prefix) && requestPath[len(prefix)] != '/' {
-		return requestPath
-	}
-	trimmed := strings.TrimPrefix(requestPath, prefix)
-	if trimmed == "" {
 		return "/"
 	}
-	if !strings.HasPrefix(trimmed, "/") {
-		trimmed = "/" + trimmed
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
 	}
-	return trimmed
+	cleaned := path.Clean(prefix)
+	if cleaned == "." || cleaned == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(cleaned, "/") {
+		cleaned = "/" + cleaned
+	}
+	return cleaned
+}
+
+func (s *Server) namespaceFromPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return defaultNamespaceName
+	}
+	prefix := s.namespacePrefix
+	if prefix == "" {
+		prefix = "/"
+	}
+	if prefix != "/" {
+		if !strings.HasPrefix(p, prefix) {
+			return defaultNamespaceName
+		}
+		if len(p) > len(prefix) && p[len(prefix)] != '/' {
+			return defaultNamespaceName
+		}
+		p = p[len(prefix):]
+	}
+	p = strings.TrimPrefix(p, "/")
+	return s.normalizeNamespace(p)
 }

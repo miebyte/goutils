@@ -12,8 +12,6 @@ require (
 	github.com/hashicorp/consul/api v1.32.1
 	github.com/hashicorp/go-version v1.6.0
 	github.com/mattn/go-isatty v0.0.20
-	github.com/orcaman/concurrent-map/v2 v2.0.1
-	github.com/panjf2000/ants/v2 v2.11.3
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.23.0
 	github.com/redis/go-redis/v9 v9.7.3

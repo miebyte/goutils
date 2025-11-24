@@ -9,10 +9,10 @@ var _ NamespaceAPI = (*Namespace)(nil)
 type Namespace struct {
 	name         string
 	server       *Server
-	rooms        cmap.ConcurrentMap[string, *Room]
-	connections  cmap.ConcurrentMap[string, Conn]
+	rooms        cmap.ConcurrentMap[string, *Room]          // roomName -> *Room
+	connections  cmap.ConcurrentMap[string, Conn]           // connID -> Conn
+	handlers     cmap.ConcurrentMap[string, []EventHandler] // event -> []EventHandler
 	middlewares  middlewareChain
-	handlers     cmap.ConcurrentMap[string, []EventHandler]
 	errorHandler ErrorHandler
 }
 

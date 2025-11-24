@@ -2,6 +2,7 @@ package websocketutils
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -139,6 +140,94 @@ func TestServerNamespacePrefix(t *testing.T) {
 	frame = readFrame(t, ws2)
 	if frame.Event != "fallback" {
 		t.Fatalf("unexpected fallback event %s", frame.Event)
+	}
+}
+
+func TestServerAllowRequest(t *testing.T) {
+	errBlocked := errors.New("blocked")
+	server := NewServer(WithAllowRequest(func(r *http.Request) error {
+		if r.URL.Query().Get("token") != "ok" {
+			return errBlocked
+		}
+		return nil
+	}))
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	baseURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/chat"
+	_, resp, err := websocket.DefaultDialer.Dial(baseURL, nil)
+	if err == nil {
+		t.Fatal("expected dial error for blocked request")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403, got resp=%v err=%v", resp, err)
+	}
+	resp.Body.Close()
+
+	ws, _, err := websocket.DefaultDialer.Dial(baseURL+"?token=ok", nil)
+	if err != nil {
+		t.Fatalf("dial allowed request failed: %v", err)
+	}
+	ws.Close()
+}
+
+func TestServerHeartbeatKeepsAlive(t *testing.T) {
+	server := NewServer(WithHeartbeat(50*time.Millisecond, 200*time.Millisecond))
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/chat"
+	ws, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer ws.Close()
+
+	for i := 0; i < 3; i++ {
+		frame := readFrame(t, ws)
+		if frame.Event != "ping" {
+			t.Fatalf("unexpected event %s", frame.Event)
+		}
+		writeFrame(t, ws, "pong", nil)
+	}
+}
+
+func TestServerHeartbeatTimeout(t *testing.T) {
+	server := NewServer(WithHeartbeat(40*time.Millisecond, 120*time.Millisecond))
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/chat"
+	ws, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer ws.Close()
+
+	frame := readFrame(t, ws)
+	if frame.Event != "ping" {
+		t.Fatalf("expected ping event, got %s", frame.Event)
+	}
+
+	deadline := time.Now().Add(800 * time.Millisecond)
+	for {
+		if err := ws.SetReadDeadline(deadline); err != nil {
+			t.Fatalf("set deadline: %v", err)
+		}
+		if _, _, err := ws.ReadMessage(); err != nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("heartbeat timeout did not close connection")
+		}
 	}
 }
 

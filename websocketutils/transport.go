@@ -23,6 +23,7 @@ func (t *wsTransport) Read() (*Frame, error) {
 	if err := json.Unmarshal(data, &frame); err != nil {
 		return nil, err
 	}
+
 	return &frame, nil
 }
 

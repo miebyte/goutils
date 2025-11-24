@@ -5,6 +5,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -24,6 +25,9 @@ type Server struct {
 	upgrader        websocket.Upgrader
 	namespacePrefix string
 	sendQueueSize   int
+	allowRequest    func(*http.Request) error
+	pingInterval    time.Duration
+	pingTimeout     time.Duration
 }
 
 // NewServer 创建一个 Server。
@@ -39,6 +43,8 @@ func NewServer(opts ...Option) ServerAPI {
 		},
 		sendQueueSize:   defaultSendQueueSize,
 		namespacePrefix: "/",
+		pingInterval:    0,
+		pingTimeout:     0,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -88,6 +94,26 @@ func WithSendQueueSize(size int) Option {
 func WithNamespacePrefix(prefix string) Option {
 	return func(s *Server) {
 		s.namespacePrefix = sanitizeNamespacePrefix(prefix)
+	}
+}
+
+// WithAllowRequest 设置请求白名单检查。
+func WithAllowRequest(fn func(*http.Request) error) Option {
+	return func(s *Server) {
+		s.allowRequest = fn
+	}
+}
+
+// WithHeartbeat 启用心跳机制。
+func WithHeartbeat(interval, timeout time.Duration) Option {
+	return func(s *Server) {
+		if interval <= 0 || timeout <= 0 {
+			s.pingInterval = 0
+			s.pingTimeout = 0
+			return
+		}
+		s.pingInterval = interval
+		s.pingTimeout = timeout
 	}
 }
 
@@ -144,6 +170,12 @@ func (s *Server) Broadcast(event string, payload any) {
 
 // ServeHTTP 实现 http.Handler。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.allowRequest != nil {
+		if err := s.allowRequest(r); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+	}
 	nsName := s.namespaceFromPath(r.URL.Path)
 	ns := s.getNamespace(nsName)
 	conn, err := s.upgrader.Upgrade(w, r, nil)
@@ -152,7 +184,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	transport := newWSTransport(conn)
-	socket := newSocketConn(ns, transport, r, s.sendQueueSize)
+	socket := newSocketConn(ns, transport, r, s.sendQueueSize, s.pingInterval, s.pingTimeout)
 	ns.addConn(socket)
 	if err := socket.Join(socket.ID()); err != nil {
 		Logger().Warnf("join self room failed conn=%s err=%v", socket.ID(), err)

@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
+
+var _ Conn = (*socketConn)(nil)
 
 type outboundMessage struct {
 	messageType int
@@ -18,15 +21,18 @@ type outboundMessage struct {
 // socketConn 表示单个 websocket 连接。
 // 一个 socketConn 仅属于一个命名空间，但是可以加入其中的多个房间。
 type socketConn struct {
-	id        string
-	namespace *namespace
-	transport Transport
-	request   *http.Request
+	id           string
+	namespace    *namespace
+	transport    Transport
+	request      *http.Request
+	pingInterval time.Duration
+	pingTimeout  time.Duration
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	send chan outboundMessage
+	send   chan outboundMessage
+	pongCh chan struct{}
 
 	handlersMu sync.RWMutex
 	handlers   map[string][]EventHandler
@@ -39,7 +45,7 @@ type socketConn struct {
 	wg        sync.WaitGroup
 }
 
-func newSocketConn(ns *namespace, transport Transport, req *http.Request, queueSize int) *socketConn {
+func newSocketConn(ns *namespace, transport Transport, req *http.Request, queueSize int, pingInterval, pingTimeout time.Duration) *socketConn {
 	parent := context.Background()
 	if req != nil {
 		if ctx := req.Context(); ctx != nil {
@@ -51,16 +57,19 @@ func newSocketConn(ns *namespace, transport Transport, req *http.Request, queueS
 		queueSize = defaultSendQueueSize
 	}
 	return &socketConn{
-		id:        uuid.NewString(),
-		namespace: ns,
-		transport: transport,
-		request:   req,
-		ctx:       baseCtx,
-		cancel:    cancel,
-		send:      make(chan outboundMessage, queueSize),
-		handlers:  make(map[string][]EventHandler),
-		rooms:     make(map[string]struct{}),
-		closed:    make(chan struct{}),
+		id:           uuid.NewString(),
+		namespace:    ns,
+		transport:    transport,
+		request:      req,
+		ctx:          baseCtx,
+		cancel:       cancel,
+		send:         make(chan outboundMessage, queueSize),
+		handlers:     make(map[string][]EventHandler),
+		rooms:        make(map[string]struct{}),
+		closed:       make(chan struct{}),
+		pingInterval: pingInterval,
+		pingTimeout:  pingTimeout,
+		pongCh:       make(chan struct{}, 1),
 	}
 }
 
@@ -186,8 +195,11 @@ func (c *socketConn) Context() context.Context {
 
 func (c *socketConn) run() {
 	c.wg.Add(1)
-
 	go c.writeLoop()
+	if c.pingInterval > 0 && c.pingTimeout > 0 {
+		c.wg.Add(1)
+		go c.heartbeatLoop()
+	}
 	c.readLoop()
 	c.Close()
 	c.wg.Wait()
@@ -218,6 +230,9 @@ func (c *socketConn) writeLoop() {
 }
 
 func (c *socketConn) handleFrame(frame *Frame) {
+	if c.handleBuiltinEvent(frame) {
+		return
+	}
 	ctx := newEventContext(c.ctx, c, c.namespace, frame.Event, frame.Data)
 
 	if handlers := c.connHandlers(frame.Event); len(handlers) > 0 {
@@ -270,4 +285,48 @@ func (c *socketConn) leaveAllRooms() {
 	}
 }
 
-var _ Conn = (*socketConn)(nil)
+func (c *socketConn) heartbeatLoop() {
+	defer c.wg.Done()
+	ticker := time.NewTicker(c.pingInterval)
+	defer ticker.Stop()
+
+	lastPong := time.Now()
+	for {
+		select {
+		case <-c.closed:
+			return
+		case <-ticker.C:
+			if time.Since(lastPong) >= c.pingTimeout {
+				Logger().Warnf("connection heartbeat timeout conn=%s", c.id)
+				_ = c.Close()
+				return
+			}
+			if err := c.Emit("ping", nil); err != nil {
+				Logger().Warnf("send ping failed conn=%s err=%v", c.id, err)
+			}
+		case <-c.pongCh:
+			lastPong = time.Now()
+		}
+	}
+}
+
+func (c *socketConn) handleBuiltinEvent(frame *Frame) bool {
+	if c.pingInterval <= 0 || c.pingTimeout <= 0 {
+		return false
+	}
+	switch frame.Event {
+	case "ping":
+		if err := c.Emit("pong", nil); err != nil {
+			Logger().Warnf("respond pong failed conn=%s err=%v", c.id, err)
+		}
+		return true
+	case "pong":
+		select {
+		case c.pongCh <- struct{}{}:
+		default:
+		}
+		return true
+	default:
+		return false
+	}
+}

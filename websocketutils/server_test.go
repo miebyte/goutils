@@ -1,11 +1,14 @@
 package websocketutils
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,14 +146,79 @@ func TestServerNamespacePrefix(t *testing.T) {
 	}
 }
 
-func TestServerAllowRequest(t *testing.T) {
-	errBlocked := errors.New("blocked")
-	server := NewServer(WithAllowRequest(func(r *http.Request) error {
+type ctxKey string
+
+func TestServerAllowRequestFuncInjectsContext(t *testing.T) {
+	key := ctxKey("user")
+	server := NewServer(WithAllowRequestFunc(func(r *http.Request) (*http.Request, error) {
 		if r.URL.Query().Get("token") != "ok" {
-			return errBlocked
+			return nil, errors.New("blocked")
 		}
-		return nil
+		ctx := context.WithValue(r.Context(), key, "uid-1")
+		return r.WithContext(ctx), nil
 	}))
+
+	ns := server.Of("chat")
+	valCh := make(chan string, 1)
+	ns.On(EventConnection, func(ctx *Context) {
+		req := ctx.Conn().Request()
+		if req == nil {
+			valCh <- ""
+			return
+		}
+		if v, _ := req.Context().Value(key).(string); v != "" {
+			valCh <- v
+		} else {
+			valCh <- ""
+		}
+	})
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server.ServeHTTP(w, r)
+	}))
+	defer ts.Close()
+
+	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/chat?token=ok"
+	ws, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer ws.Close()
+
+	select {
+	case val := <-valCh:
+		if val != "uid-1" {
+			t.Fatalf("unexpected context value %s", val)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for context value")
+	}
+}
+
+func TestNamespaceRoomContextEmit(t *testing.T) {
+	server := NewServer()
+	ns := server.Of("chat")
+
+	readyCh := make(chan struct{}, 3)
+	connMu := sync.Mutex{}
+	conns := make(map[string]Conn)
+
+	ns.On(EventConnection, func(ctx *Context) {
+		user := ctx.Conn().Request().URL.Query().Get("user")
+		switch user {
+		case "a":
+			_ = ctx.Conn().Join("room-1")
+		case "b":
+			_ = ctx.Conn().Join("room-1")
+			_ = ctx.Conn().Join("room-2")
+		case "c":
+			_ = ctx.Conn().Join("room-2")
+		}
+		connMu.Lock()
+		conns[user] = ctx.Conn()
+		connMu.Unlock()
+		readyCh <- struct{}{}
+	})
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.ServeHTTP(w, r)
@@ -158,20 +226,69 @@ func TestServerAllowRequest(t *testing.T) {
 	defer ts.Close()
 
 	baseURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/chat"
-	_, resp, err := websocket.DefaultDialer.Dial(baseURL, nil)
-	if err == nil {
-		t.Fatal("expected dial error for blocked request")
-	}
-	if resp == nil || resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("expected 403, got resp=%v err=%v", resp, err)
-	}
-	resp.Body.Close()
+	wsA := dialWS(t, baseURL+"?user=a")
+	defer wsA.Close()
+	wsB := dialWS(t, baseURL+"?user=b")
+	defer wsB.Close()
+	wsC := dialWS(t, baseURL+"?user=c")
+	defer wsC.Close()
 
-	ws, _, err := websocket.DefaultDialer.Dial(baseURL+"?token=ok", nil)
-	if err != nil {
-		t.Fatalf("dial allowed request failed: %v", err)
+	for i := 0; i < 3; i++ {
+		select {
+		case <-readyCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for room joins")
+		}
 	}
-	ws.Close()
+
+	if err := ns.To("room-1").To("room-2").Emit("notice", map[string]string{"msg": "broadcast"}); err != nil {
+		t.Fatalf("room context emit failed: %v", err)
+	}
+
+	for _, ws := range []*websocket.Conn{wsA, wsB, wsC} {
+		frame := readFrame(t, ws)
+		if frame.Event != "notice" {
+			t.Fatalf("unexpected event %s", frame.Event)
+		}
+	}
+
+	connMu.Lock()
+	excluded := conns["b"]
+	connMu.Unlock()
+	if excluded == nil {
+		t.Fatal("missing connection for exclusion")
+	}
+
+	if err := ns.To("room-1").To("room-2").EmitExcept("partial", map[string]string{"msg": "subset"}, excluded); err != nil {
+		t.Fatalf("room context emit except failed: %v", err)
+	}
+
+	for _, ws := range []*websocket.Conn{wsA, wsC} {
+		frame := readFrame(t, ws)
+		if frame.Event != "partial" {
+			t.Fatalf("unexpected subset event %s", frame.Event)
+		}
+	}
+
+	if err := wsB.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	if _, _, err := wsB.ReadMessage(); err == nil {
+		t.Fatal("expected timeout for excluded connection")
+	} else {
+		if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
+			t.Fatalf("expected timeout error, got %v", err)
+		}
+	}
+}
+
+func dialWS(t *testing.T, url string) *websocket.Conn {
+	t.Helper()
+	ws, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	return ws
 }
 
 func TestServerHeartbeatKeepsAlive(t *testing.T) {

@@ -34,6 +34,8 @@ type NamespaceAPI interface {
 	On(event string, handler EventHandler)
 	// Room 返回一个房间。
 	Room(name string) RoomAPI
+	// To 返回房间上下文，用于多房间广播。
+	To(room string) *RoomContext
 }
 
 // ServerAPI 抽象命名空间能力与 http.Handler。
@@ -84,3 +86,5 @@ type Transport interface {
 	// Close 关闭连接
 	Close() error
 }
+
+type AllowRequestFunc func(*http.Request) (*http.Request, error)

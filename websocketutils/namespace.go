@@ -5,6 +5,8 @@ import (
 	"sync"
 )
 
+var _ NamespaceAPI = (*namespace)(nil)
+
 // namespace 管理命名空间连接。
 type namespace struct {
 	name     string
@@ -125,4 +127,7 @@ func (n *namespace) getRoom(name string) *room {
 	return n.rooms[name]
 }
 
-var _ NamespaceAPI = (*namespace)(nil)
+// To 创建房间上下文。
+func (n *namespace) To(room string) *RoomContext {
+	return newRoomContext(n).To(room)
+}

@@ -10,6 +10,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var _ ServerAPI = (*Server)(nil)
+
 const (
 	defaultNamespaceName = "default"
 	defaultSendQueueSize = 64
@@ -25,7 +27,7 @@ type Server struct {
 	upgrader        websocket.Upgrader
 	namespacePrefix string
 	sendQueueSize   int
-	allowRequest    func(*http.Request) error
+	allowRequest    func(*http.Request) (*http.Request, error)
 	pingInterval    time.Duration
 	pingTimeout     time.Duration
 }
@@ -97,8 +99,11 @@ func WithNamespacePrefix(prefix string) Option {
 	}
 }
 
-// WithAllowRequest 设置请求白名单检查。
-func WithAllowRequest(fn func(*http.Request) error) Option {
+// WithAllowRequestFunc 允许在校验后替换请求。
+func WithAllowRequestFunc(fn AllowRequestFunc) Option {
+	if fn == nil {
+		return nil
+	}
 	return func(s *Server) {
 		s.allowRequest = fn
 	}
@@ -170,21 +175,35 @@ func (s *Server) Broadcast(event string, payload any) {
 
 // ServeHTTP 实现 http.Handler。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	req := r
 	if s.allowRequest != nil {
-		if err := s.allowRequest(r); err != nil {
+		newReq, err := s.allowRequest(r)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
+		if newReq != nil {
+			req = newReq
+		}
 	}
-	nsName := s.namespaceFromPath(r.URL.Path)
+
+	nsName := s.namespaceFromPath(req.URL.Path)
 	ns := s.getNamespace(nsName)
-	conn, err := s.upgrader.Upgrade(w, r, nil)
+	conn, err := s.upgrader.Upgrade(w, req, nil)
 	if err != nil {
 		Logger().Errorf("websocket upgrade failed err=%v", err)
 		return
 	}
 	transport := newWSTransport(conn)
-	socket := newSocketConn(ns, transport, r, s.sendQueueSize, s.pingInterval, s.pingTimeout)
+	socket := newSocketConn(
+		ns,
+		transport,
+		req,
+		s.sendQueueSize,
+		s.pingInterval,
+		s.pingTimeout,
+	)
+
 	ns.addConn(socket)
 	if err := socket.Join(socket.ID()); err != nil {
 		Logger().Warnf("join self room failed conn=%s err=%v", socket.ID(), err)
@@ -192,8 +211,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ns.dispatch(EventConnection, socket, nil)
 	socket.run()
 }
-
-var _ ServerAPI = (*Server)(nil)
 
 func sanitizeNamespacePrefix(prefix string) string {
 	prefix = strings.TrimSpace(prefix)

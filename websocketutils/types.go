@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 )
 
 const (
 	// EventConnection 是命名空间连接事件。
 	EventConnection = "connection"
+	// EventDisconnect 是连接断开事件。
+	EventDisconnect = "disconnect"
 )
 
 // ErrConnClosed 表示连接已经关闭。
@@ -25,13 +28,13 @@ type Frame struct {
 }
 
 // Middleware 定义连接建立后的中间件。
-type Middleware func(Socket) error
+type Middleware func(Conn) error
 
 // EventHandler 定义命名空间级别的事件处理器。
-type EventHandler func(Socket)
+type EventHandler func(Conn)
 
-// MessageHandler 定义连接级别的事件处理器。
-type MessageHandler func(Socket, json.RawMessage)
+// ErrorHandler 定义错误处理器
+type ErrorHandler func(Conn, error)
 
 // Emitter 定义广播器。
 type Emitter interface {
@@ -41,42 +44,96 @@ type Emitter interface {
 // TargetEmitter 支持链式房间广播。
 type TargetEmitter interface {
 	Emitter
-	EmitExcept(event string, payload any, socket Socket) error
+	EmitExcept(event string, payload any, socket Conn) error
 	To(...string) TargetEmitter
 }
 
-// NamespaceAPI 抽象 On/Use/Emit 能力。
+// RoomAPI 抽象 Room 能力。
+type RoomAPI interface {
+	Name() string
+
+	// 广播给房间成员
+	Broadcast(event string, data any)
+
+	// 管理连接
+	Add(conn Conn)
+	Remove(conn Conn)
+	Members() []Conn
+}
+
+// NamespaceAPI
 type NamespaceAPI interface {
 	// Emit 广播事件到整个命名空间。
 	Emitter
+	// Namespace 返回命名空间名称。
+	Name() string
 	// On 绑定事件处理函数。
 	On(string, EventHandler)
+	// OnError 绑定错误处理函数
+	OnError(ErrorHandler)
 	// Use 增加中间件。
 	Use(Middleware)
+	// Room 返回一个房间。
+	Room(name string) RoomAPI
 	// To 返回房间广播器。
 	To(...string) TargetEmitter
 }
 
 // ServerAPI 抽象命名空间能力与 http.Handler。
 type ServerAPI interface {
-	NamespaceAPI
-	// Of 返回一个命名空间
 	Of(string) *Namespace
+	// 广播（所有 namespace）
+	Broadcast(event string, data any)
+	// 中间件
+	Use(middleware Middleware)
 	ServeHTTP(http.ResponseWriter, *http.Request)
 }
 
-// Socket 为对外暴露的连接能力。
-type Socket interface {
-	Emitter
+// Conn 代表一个客户端连接，可收发事件，加入/退出房间。。
+// 它是一个最底层的抽象，它对外暴露了 NamespaceAPI 能力，以及自己的 id 和房间管理能力。
+// 它内部维护了一个命名空间对象的引用，以及一个房间管理器。
+// 一个 Socket 仅属于一个命名空间，但是可以加入其中的多个房间。
+type Conn interface {
+	// ID 返回连接 ID。
 	ID() string
-	Namespace() string
-	Context() context.Context
-	SetContext(ctx context.Context)
+	// Request 返回握手请求。
 	Request() *http.Request
-	On(string, MessageHandler)
+	// Close 关闭连接。
+	Close() error
+	// Namespace 返回当前连接加入的命名空间。
+	Namespace() NamespaceAPI
+	// SendFrame 发送数据帧。
+	SendFrame([]byte) error
+	// Emit 发送事件给当前连接。
+	Emit(string, any) error
+	// On 绑定事件处理函数。
+	On(string, EventHandler)
+	// Use 增加中间件。
+	Use(Middleware)
+	// Join 将连接加入房间。
 	Join(string) error
+	// Leave 将连接移出房间。
 	Leave(string)
+	// Rooms 返回当前连接所在的房间列表。
 	Rooms() []string
+	Context() context.Context
+	Set(key string, value any)
+	Get(key string) (any, bool)
+}
+
+// Transport 定义底层连接传输接口
+type Transport interface {
+	// Read 读取数据帧
+	Read() (*Frame, error)
+	// Write 写入数据
+	Write(messageType int, data []byte) error
+	// WriteControl 写入控制消息
+	WriteControl(messageType int, data []byte, deadline time.Time) error
+	// SetReadDeadline 设置读取超时
+	SetReadDeadline(t time.Time) error
+	// SetPongHandler 设置 Pong 处理器
+	SetPongHandler(h func(appData string) error)
+	// Close 关闭连接
 	Close() error
 }
 

@@ -17,20 +17,23 @@ func main() {
 	srv := websocketutils.NewServer(
 		websocketutils.WithHeartbeat(10*time.Second, 20*time.Second),
 	)
-	srv.Use(func(socket websocketutils.Socket) error {
+	// 配置默认命名空间
+	defaultNS := srv.Of("/")
+	defaultNS.Use(func(socket websocketutils.Conn) error {
 		logging.Infof("middleware: %s entering namespace %s", socket.ID(), socket.Namespace())
 		return nil
 	})
 
-	srv.On(websocketutils.EventConnection, func(s websocketutils.Socket) {
+	defaultNS.On(websocketutils.EventConnection, func(s websocketutils.Conn) {
 		logging.Infof("connection established: %s", s.ID())
 	})
 
 	orderNamespace := srv.Of("/orders")
-	orderNamespace.On(websocketutils.EventConnection, func(socket websocketutils.Socket) {
+	orderNamespace.On(websocketutils.EventConnection, func(socket websocketutils.Conn) {
 		logging.Infof("connection established to orders namespace: %s", socket.ID())
 
-		socket.On("join", func(s websocketutils.Socket, rm json.RawMessage) {
+		socket.On("join", func(s websocketutils.Conn) {
+			rm := websocketutils.GetFrameData(s)
 			type payload struct {
 				Room string `json:"room"`
 			}
@@ -48,7 +51,7 @@ func main() {
 			logging.Infof("joined room: %s", p.Room)
 		})
 
-		socket.On("broadcast", func(s websocketutils.Socket, rm json.RawMessage) {
+		socket.On("broadcast", func(s websocketutils.Conn) {
 			orderNamespace.Emit("broadcast", map[string]string{
 				"message": "hello all orders clients",
 			})
@@ -56,7 +59,7 @@ func main() {
 			logging.Infof("broadcasted message: hello all orders clients")
 		})
 
-		socket.On("chat", func(s websocketutils.Socket, rm json.RawMessage) {
+		socket.On("chat", func(s websocketutils.Conn) {
 		})
 	})
 

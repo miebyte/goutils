@@ -1,166 +1,202 @@
 package websocketutils
 
 import (
-	"maps"
-	"slices"
-	"sync"
+	cmap "github.com/orcaman/concurrent-map/v2"
 )
 
-// Namespace 代表具备中间件及房间能力的命名空间。
+var _ NamespaceAPI = (*Namespace)(nil)
+
 type Namespace struct {
-	name   string
-	server *Server
-
-	handlerMu sync.RWMutex
-	handlers  map[string][]EventHandler
-
-	middlewares middlewareChain
-	hub         *connHub
-	rooms       *roomRegistry
+	name         string
+	server       *Server
+	rooms        cmap.ConcurrentMap[string, *Room]
+	connections  cmap.ConcurrentMap[string, Conn]
+	middlewares  middlewareChain
+	handlers     cmap.ConcurrentMap[string, []EventHandler]
+	errorHandler ErrorHandler
 }
 
 func newNamespace(server *Server, name string) *Namespace {
-	ns := &Namespace{
-		name:     name,
-		server:   server,
-		handlers: make(map[string][]EventHandler),
-		hub:      newConnHub(),
+	return &Namespace{
+		name:        name,
+		server:      server,
+		rooms:       cmap.New[*Room](),
+		connections: cmap.New[Conn](),
+		handlers:    cmap.New[[]EventHandler](),
 	}
-	ns.rooms = newRoomRegistry(ns)
-	return ns
 }
 
-// Name 返回命名空间名称。
 func (n *Namespace) Name() string {
 	return n.name
 }
 
-// On 绑定命名空间事件。
+// On 绑定事件处理函数
+// 目前主要用于绑定 connection 事件
 func (n *Namespace) On(event string, handler EventHandler) {
 	if event == "" || handler == nil {
 		return
 	}
-	n.handlerMu.Lock()
-	n.handlers[event] = append(n.handlers[event], handler)
-	n.handlerMu.Unlock()
+	n.handlers.Upsert(event, []EventHandler{handler}, func(exist bool, oldVal []EventHandler, newVal []EventHandler) []EventHandler {
+		return append(oldVal, newVal...)
+	})
 }
 
-// Use 增加命名空间中间件。
-func (n *Namespace) Use(mw Middleware) {
-	n.middlewares.Add(mw)
+// OnError 绑定错误处理函数
+func (n *Namespace) OnError(handler ErrorHandler) {
+	n.errorHandler = handler
 }
 
-// Emit 广播事件到整个命名空间。
-func (n *Namespace) Emit(event string, payload any) error {
-	frame, err := encodeFrame(event, payload)
-	if err != nil {
-		return err
+func (n *Namespace) onError(conn Conn, err error) {
+	if n.errorHandler != nil {
+		n.errorHandler(conn, err)
+		return
 	}
-	return n.hub.Deliver(frame, n.hub.Snapshot())
+	websocketLogger.Errorf("websocket error: %v", err)
 }
 
-// To 返回房间广播器。
+// Use 增加中间件
+func (n *Namespace) Use(middleware Middleware) {
+	n.middlewares.Add(middleware)
+}
+
+// Room 返回一个房间，如果不存在则创建
+func (n *Namespace) Room(name string) RoomAPI {
+	if room, ok := n.rooms.Get(name); ok {
+		return room
+	}
+
+	newR := newRoom(n, name)
+	if n.rooms.SetIfAbsent(name, newR) {
+		return newR
+	}
+	// already exists
+	r, _ := n.rooms.Get(name)
+	return r
+}
+
+// To 返回房间广播器
 func (n *Namespace) To(rooms ...string) TargetEmitter {
 	return (&roomEmitter{
 		namespace: n,
 	}).To(rooms...)
 }
 
-// Room 返回指定房间，没有则创建。
-func (n *Namespace) Room(name string) *Room {
-	return n.rooms.GetOrCreate(name)
+// Emit 广播事件到整个命名空间
+func (n *Namespace) Emit(event string, data any) error {
+	// 广播给所有连接
+	frame, err := encodeFrame(event, data)
+	if err != nil {
+		return err
+	}
+	for _, conn := range n.connections.Items() {
+		err = conn.SendFrame(frame)
+		if err != nil {
+			websocketLogger.Errorf("send frame error: %v", err)
+		}
+	}
+	return nil
 }
 
-func (n *Namespace) runMiddlewares(conn Socket) error {
+func (n *Namespace) runMiddlewares(conn Conn) error {
 	return n.middlewares.Run(conn)
 }
 
-func (n *Namespace) attachConnection(conn connection) {
-	n.hub.Add(conn)
-	handlers := n.handlersSnapshot(EventConnection)
-	for _, handler := range handlers {
-		handler(conn)
+func (n *Namespace) attachConnection(conn Conn) {
+	n.connections.Set(conn.ID(), conn)
+
+	// 触发 connection 事件
+	handlers, ok := n.handlers.Get(EventConnection)
+	if ok {
+		for _, h := range handlers {
+			go h(conn)
+		}
 	}
 }
 
-func (n *Namespace) detachConnection(conn connection) {
-	n.hub.Remove(conn.ID())
+func (n *Namespace) detachConnection(conn Conn) {
+	n.connections.Remove(conn.ID())
+
+	// 触发 disconnect 事件
+	handlers, ok := n.handlers.Get(EventDisconnect)
+	if ok {
+		for _, h := range handlers {
+			go h(conn)
+		}
+	}
 }
 
-func (n *Namespace) joinRoom(name string, conn connection) error {
-	return n.rooms.Join(name, conn)
+func (n *Namespace) joinRoom(roomName string, s *socket) error {
+	r := n.Room(roomName)
+	r.Add(s)
+	s.addRoom(roomName)
+	return nil
 }
 
-func (n *Namespace) leaveRoom(name string, conn connection) {
-	n.rooms.Leave(name, conn)
+func (n *Namespace) leaveRoom(roomName string, s *socket) {
+	r, ok := n.rooms.Get(roomName)
+	if ok {
+		r.Remove(s)
+	}
+	s.removeRoom(roomName)
 }
 
-func (n *Namespace) handlersSnapshot(event string) []EventHandler {
-	n.handlerMu.RLock()
-	defer n.handlerMu.RUnlock()
-	return slices.Clone(n.handlers[event])
-}
-
-// roomEmitter 实现 TargetEmitter。
+// roomEmitter implementation
 type roomEmitter struct {
 	namespace *Namespace
-	targets   []string
+	rooms     []string
+	except    Conn
 }
 
-// To 追加房间目标。
-func (r *roomEmitter) To(rooms ...string) TargetEmitter {
-	if r == nil || len(rooms) == 0 {
-		return r
-	}
-	r.targets = append(r.targets, rooms...)
-	return r
+func (e *roomEmitter) To(rooms ...string) TargetEmitter {
+	e.rooms = append(e.rooms, rooms...)
+	return e
 }
 
-// Emit 将事件发送到指定房间。
-func (r *roomEmitter) Emit(event string, payload any) error {
-	return r.EmitExcept(event, payload, nil)
+func (e *roomEmitter) EmitExcept(event string, data any, except Conn) error {
+	e.except = except
+	return e.Emit(event, data)
 }
 
-// EmitExcept 在广播时排除指定连接。
-func (r *roomEmitter) EmitExcept(event string, payload any, socket Socket) error {
-	if r == nil || r.namespace == nil {
-		return ErrNoSuchRoom
-	}
-	frame, err := encodeFrame(event, payload)
+func (e *roomEmitter) Emit(event string, data any) error {
+	frame, err := encodeFrame(event, data)
 	if err != nil {
 		return err
 	}
 
-	roomSet := make(map[string]struct{})
-	for _, name := range r.targets {
-		if name == "" {
+	// Collect all unique connections from target rooms
+	targetConns := make(map[string]Conn)
+
+	if len(e.rooms) == 0 {
+		// broadcast to all connections
+		for _, conn := range e.namespace.connections.Items() {
+			if e.except != nil && conn.ID() == e.except.ID() {
+				continue
+			}
+			err = conn.SendFrame(frame)
+			if err != nil {
+				// Use namespace error handler
+				e.namespace.onError(conn, err)
+			}
+		}
+		return nil
+	}
+
+	for _, roomName := range e.rooms {
+		room := e.namespace.Room(roomName)
+		for _, m := range room.Members() {
+			targetConns[m.ID()] = m
+		}
+	}
+
+	for id, conn := range targetConns {
+		if e.except != nil && id == e.except.ID() {
 			continue
 		}
-		roomSet[name] = struct{}{}
+		err = conn.SendFrame(frame)
+		if err != nil {
+			// Use namespace error handler
+			e.namespace.onError(conn, err)
+		}
 	}
-	if len(roomSet) == 0 {
-		return ErrNoSuchRoom
-	}
-
-	rooms := r.namespace.rooms.Select(roomSet)
-	if len(rooms) == 0 {
-		return ErrNoSuchRoom
-	}
-
-	recipients := make(map[string]connection)
-	for _, room := range rooms {
-		room.mu.RLock()
-		maps.Copy(recipients, room.members)
-		room.mu.RUnlock()
-	}
-
-	if socket != nil {
-		delete(recipients, socket.ID())
-	}
-
-	buffer := make([]connection, 0, len(recipients))
-	for _, conn := range recipients {
-		buffer = append(buffer, conn)
-	}
-	return r.namespace.hub.Deliver(frame, buffer)
+	return nil
 }

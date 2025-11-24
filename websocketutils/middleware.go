@@ -17,12 +17,12 @@ func (m *middlewareChain) Add(mw Middleware) {
 	m.mu.Unlock()
 }
 
-func (m *middlewareChain) Run(socket Socket) error {
+func (m *middlewareChain) Run(conn Conn) error {
 	m.mu.RLock()
 	chain := append([]Middleware(nil), m.chain...)
 	m.mu.RUnlock()
 	for _, mw := range chain {
-		if err := mw(socket); err != nil {
+		if err := mw(conn); err != nil {
 			return err
 		}
 	}

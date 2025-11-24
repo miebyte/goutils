@@ -3,12 +3,11 @@ package websocketutils
 import (
 	"context"
 	"net/http"
-	"path"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	cmap "github.com/orcaman/concurrent-map/v2"
 )
 
 const (
@@ -17,17 +16,12 @@ const (
 )
 
 type Server struct {
-	upgrader    websocket.Upgrader
-	mu          sync.RWMutex
-	namespaces  map[string]*Namespace
-	middlewares middlewareChain
-
+	upgrader     websocket.Upgrader
+	namespaces   cmap.ConcurrentMap[string, *Namespace]
 	pingInterval time.Duration
 	pongTimeout  time.Duration
-
-	handshake HandshakeFunc
-
-	pathPrefix string
+	handshake    HandshakeFunc
+	pathPrefix   string
 }
 
 type ServerOption func(*Server)
@@ -43,7 +37,7 @@ func NewServer(opts ...ServerOption) *Server {
 				return true
 			},
 		},
-		namespaces:   make(map[string]*Namespace),
+		namespaces:   cmap.New[*Namespace](),
 		pingInterval: defaultPingInterval,
 		pongTimeout:  defaultPongTimeout,
 	}
@@ -93,6 +87,18 @@ func WithPrefix(prefix string) ServerOption {
 	}
 }
 
+func (s *Server) Broadcast(event string, data any) {
+	for _, ns := range s.namespaces.Items() {
+		ns.Emit(event, data)
+	}
+}
+
+func (s *Server) Use(middleware Middleware) {
+	for _, ns := range s.namespaces.Items() {
+		ns.Use(middleware)
+	}
+}
+
 // ServeHTTP 实现 http.Handler。
 // Server 会根据请求的 URL 解析出一个命名空间并自动加入
 // 每个 socket 都会自动加入一个由其自己的 id 标识的房间。
@@ -122,117 +128,51 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	transport := &WebSocketTransport{conn: conn}
 	socket := newSocket(r.Context(), namespace, transport, r)
-	if err := s.runMiddlewares(socket); err != nil {
-		_ = socket.Close()
-		return
-	}
 	if err := namespace.runMiddlewares(socket); err != nil {
 		_ = socket.Close()
 		return
 	}
 
 	// 每个 socket 都会自动加入一个由其自己的 id 标识的房间。
-	namespace.joinRoom(socket.ID(), socket)
+	socket.Join(socket.ID())
 	// connection 事件处理
 	namespace.attachConnection(socket)
-}
-
-// On 代理默认命名空间的事件绑定。
-func (s *Server) On(event string, handler EventHandler) {
-	s.Of("/").On(event, handler)
-}
-
-// Use 注册全局中间件。
-func (s *Server) Use(mw Middleware) {
-	s.middlewares.Add(mw)
-}
-
-// Emit 代理默认命名空间的广播。
-func (s *Server) Emit(event string, payload any) error {
-	return s.Of("/").Emit(event, payload)
-}
-
-// To 代理默认命名空间的房间广播器。
-func (s *Server) To(rooms ...string) TargetEmitter {
-	return s.Of("/").To(rooms...)
 }
 
 // Of 返回一个命名空间
 // 如果命名空间不存在，则创建一个。
 func (s *Server) Of(name string) *Namespace {
 	normalized := normalizeNamespace(name)
-	s.mu.RLock()
-	ns := s.namespaces[normalized]
-	s.mu.RUnlock()
+	ns, _ := s.namespaces.Get(normalized)
 	if ns != nil {
 		return ns
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ns = s.namespaces[normalized]
-	if ns == nil {
-		ns = newNamespace(s, normalized)
-		s.namespaces[normalized] = ns
-		websocketLogger.Infof("created namespace: %s", normalized)
-	}
+
+	ns = newNamespace(s, normalized)
+	s.namespaces.Set(normalized, ns)
+	websocketLogger.Infof("created namespace: %s", normalized)
+
 	return ns
 }
 
 func (s *Server) heartbeatConfig() (time.Duration, time.Duration) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.pingInterval, s.pongTimeout
 }
 
-// SetHandshake 设置握手校验函数。
 func (s *Server) SetHandshake(fn HandshakeFunc) {
-	s.mu.Lock()
 	s.handshake = fn
-	s.mu.Unlock()
 }
 
-func (s *Server) runMiddlewares(conn Socket) error {
-	return s.middlewares.Run(conn)
-}
-
-func normalizeNamespace(name string) string {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
-		return "/"
+func (s *Server) checkHandshake(r *http.Request) (context.Context, error) {
+	if s.handshake == nil {
+		return nil, nil
 	}
-	if !strings.HasPrefix(trimmed, "/") {
-		trimmed = "/" + trimmed
-	}
-	cleaned := path.Clean(trimmed)
-	if cleaned == "." {
-		return "/"
-	}
-	if !strings.HasPrefix(cleaned, "/") {
-		cleaned = "/" + cleaned
-	}
-	return cleaned
-}
-
-func normalizePrefix(prefix string) string {
-	trimmed := strings.TrimSpace(prefix)
-	if trimmed == "" || trimmed == "/" {
-		return ""
-	}
-	if !strings.HasPrefix(trimmed, "/") {
-		trimmed = "/" + trimmed
-	}
-	trimmed = strings.TrimRight(trimmed, "/")
-	if trimmed == "" || trimmed == "/" {
-		return ""
-	}
-	return trimmed
+	return s.handshake(r)
 }
 
 func (s *Server) getNamespace(name string) *Namespace {
 	normalized := normalizeNamespace(name)
-	s.mu.RLock()
-	ns := s.namespaces[normalized]
-	s.mu.RUnlock()
+	ns, _ := s.namespaces.Get(normalized)
 	return ns
 }
 
@@ -258,14 +198,4 @@ func (s *Server) namespacePath(requestPath string) string {
 		trimmed = "/" + trimmed
 	}
 	return trimmed
-}
-
-func (s *Server) checkHandshake(r *http.Request) (context.Context, error) {
-	s.mu.RLock()
-	fn := s.handshake
-	s.mu.RUnlock()
-	if fn == nil {
-		return nil, nil
-	}
-	return fn(r)
 }

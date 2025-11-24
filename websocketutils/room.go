@@ -1,73 +1,61 @@
 package websocketutils
 
-import "sync"
+import (
+	cmap "github.com/orcaman/concurrent-map/v2"
+)
 
-// Room 代表命名空间中的房间。
+var _ RoomAPI = (*Room)(nil)
+
 type Room struct {
-	name      string
-	namespace *Namespace
-	mu        sync.RWMutex
-	members   map[string]connection
+	name    string
+	ns      *Namespace
+	members cmap.ConcurrentMap[string, Conn]
 }
 
 func newRoom(ns *Namespace, name string) *Room {
 	return &Room{
-		name:      name,
-		namespace: ns,
-		members:   make(map[string]connection),
+		name:    name,
+		ns:      ns,
+		members: cmap.New[Conn](),
 	}
 }
 
-// Name 返回房间名称。
 func (r *Room) Name() string {
 	return r.name
 }
 
-// Emit 向房间内所有连接广播事件。
-func (r *Room) Emit(event string, payload any) error {
-	return r.emit(event, payload, "")
-}
-
-// EmitExcept 在广播时排除指定连接。
-func (r *Room) EmitExcept(event string, payload any, socket Socket) error {
-	if socket == nil {
-		return r.emit(event, payload, "")
-	}
-	return r.emit(event, payload, socket.ID())
-}
-
-func (r *Room) emit(event string, payload any, exclude string) error {
-	data, err := encodeFrame(event, payload)
+// Broadcast 广播给房间成员
+func (r *Room) Broadcast(event string, data any) {
+	frame, err := encodeFrame(event, data)
 	if err != nil {
-		return err
+		websocketLogger.Warnf("broadcast encode error: %v", err)
+		return
 	}
 
-	return r.namespace.hub.Deliver(data, r.receivers(exclude))
-}
-
-func (r *Room) add(conn connection) {
-	r.mu.Lock()
-	r.members[conn.ID()] = conn
-	r.mu.Unlock()
-}
-
-func (r *Room) remove(connID string) bool {
-	r.mu.Lock()
-	delete(r.members, connID)
-	empty := len(r.members) == 0
-	r.mu.Unlock()
-	return empty
-}
-
-func (r *Room) receivers(exclude string) []connection {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	receivers := make([]connection, 0, len(r.members))
-	for id, conn := range r.members {
-		if exclude != "" && id == exclude {
-			continue
+	for _, conn := range r.members.Items() {
+		err = conn.SendFrame(frame)
+		if err != nil {
+			websocketLogger.Errorf("send frame error: %v", err)
 		}
-		receivers = append(receivers, conn)
 	}
-	return receivers
+}
+
+// Add 添加连接到房间
+func (r *Room) Add(conn Conn) {
+	r.members.Set(conn.ID(), conn)
+}
+
+// Remove 从房间移除连接
+func (r *Room) Remove(conn Conn) {
+	r.members.Remove(conn.ID())
+}
+
+// Members 返回房间成员列表
+func (r *Room) Members() []Conn {
+
+	members := make([]Conn, 0, r.members.Count())
+	for _, v := range r.members.Items() {
+		members = append(members, v)
+	}
+	return members
 }

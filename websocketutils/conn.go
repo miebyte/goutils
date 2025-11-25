@@ -160,20 +160,22 @@ func (c *socketConn) Join(room string) error {
 	return nil
 }
 
-func (c *socketConn) Leave(room string) {
+func (c *socketConn) Leave(room string) error {
 	if room == "" {
-		return
+		return nil
 	}
 	c.roomsMu.Lock()
 	if _, exists := c.rooms[room]; !exists {
 		c.roomsMu.Unlock()
-		return
+		return nil
 	}
 	delete(c.rooms, room)
 	c.roomsMu.Unlock()
 	if rm := c.namespace.getRoom(room); rm != nil {
 		rm.Remove(c)
 	}
+
+	return nil
 }
 
 func (c *socketConn) Rooms() []string {

@@ -71,7 +71,6 @@ func NewGormLogger(opts ...GormLoggerOption) *gormLogger {
 		os.Stdout,
 		logging.WithEnableSource(true),
 	)
-	logger.Enable(level.LevelDebug)
 
 	l := &gormLogger{
 		logger:       logger,
@@ -95,9 +94,13 @@ func (gl *gormLogger) wrapPrefix(ctx context.Context) context.Context {
 	return ctx
 }
 
-func (gl *gormLogger) LogMode(level logger.LogLevel) logger.Interface {
+func (gl *gormLogger) LogMode(lv logger.LogLevel) logger.Interface {
+	if lv == logger.Info {
+		gl.logger.Enable(level.LevelDebug)
+	}
+
 	newLogger := *gl
-	newLogger.logMod = level
+	newLogger.logMod = lv
 	return &newLogger
 }
 

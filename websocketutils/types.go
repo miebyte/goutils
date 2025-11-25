@@ -70,7 +70,7 @@ type Conn interface {
 	// Join 将连接加入房间。
 	Join(room string) error
 	// Leave 将连接移出房间。
-	Leave(room string)
+	Leave(room string) error
 	// Rooms 返回当前连接所在的房间列表。
 	Rooms() []string
 	// Context 返回连接上下文。

@@ -86,11 +86,12 @@ func (c *socketConn) Close() error {
 	c.closeOnce.Do(func() {
 		c.cancel()
 		close(c.closed)
-		c.leaveAllRooms()
 		if c.namespace != nil {
-			c.namespace.removeConn(c.id)
 			c.namespace.dispatch(EventDisconnect, c, nil)
+			c.namespace.removeConn(c.id)
 		}
+
+		c.leaveAllRooms()
 		close(c.send)
 		if c.transport != nil {
 			if closeErr := c.transport.Close(); closeErr != nil && err == nil {

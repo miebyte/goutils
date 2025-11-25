@@ -22,7 +22,8 @@ type RoomAPI interface {
 	Members() []Conn
 }
 
-// NamespaceAPI
+// NamespaceAPI 它管理着当前 websocket 服务下一个命名空间内的所有连接以及房间
+// 当创建多个连接加入该命名空间时，它们各自 Conn 中的 Namespace() 返回的都是同一个 NamespaceAPI 实例。
 type NamespaceAPI interface {
 	// Namespace 返回命名空间名称。
 	Name() string

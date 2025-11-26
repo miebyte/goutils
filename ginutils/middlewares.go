@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,8 +23,11 @@ import (
 	"github.com/miebyte/goutils/logging/level"
 )
 
+const maxBodyLen = 1024
+
 var (
-	Logger *logging.PrettyLogger
+	Logger              *logging.PrettyLogger
+	requestBodyReplacer = strings.NewReplacer("\n", "", "\n ", "", "\t", "")
 )
 
 func init() {
@@ -32,22 +36,18 @@ func init() {
 	Logger.Enable(level.LevelDebug)
 }
 
-const maxBodyLen = 1024
-
+// LoggingRequest 打印请求体
 func LoggingRequest(header bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ctx := c.Request.Context()
+		msgTmp := "incoming http request Method=%s Url=%s Body=%s"
+		args := []any{c.Request.Method, c.Request.URL.RequestURI(), requestBody(c)}
 
-		fields := map[string]any{
-			"method": c.Request.Method,
-			"uri":    c.Request.URL.RequestURI(),
-			"remote": c.Request.RemoteAddr,
-			"body":   requestBody(c),
-		}
 		if header {
-			fields["header"] = c.Request.Header
+			msgTmp += " Header=%s"
+			args = append(args, c.Request.Header)
 		}
-		Logger.Infoc(ctx, "incoming http request: %+v", fields)
+
+		Logger.Infoc(c, msgTmp, args...)
 		c.Next()
 	}
 }
@@ -63,11 +63,7 @@ func requestBody(c *gin.Context) string {
 	_ = c.Request.Body.Close()
 	c.Request.Body = io.NopCloser(bytes.NewReader(bodyData))
 
-	bodySize := len(bodyData)
-	if bodySize > maxBodyLen {
-		bodySize = maxBodyLen
-	}
-	return string(bodyData[:bodySize])
+	return requestBodyReplacer.Replace(string(bodyData[:min(len(bodyData), maxBodyLen)]))
 }
 
 func LoggerMiddleware(loggers ...logging.Logger) gin.HandlerFunc {

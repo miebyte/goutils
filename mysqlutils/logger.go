@@ -70,6 +70,7 @@ func NewGormLogger(opts ...GormLoggerOption) *gormLogger {
 	logger := logging.NewPrettyLogger(
 		os.Stdout,
 		logging.WithEnableSource(true),
+		logging.WithModule("GORMUTILS"),
 	)
 
 	l := &gormLogger{

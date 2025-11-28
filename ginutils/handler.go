@@ -14,68 +14,92 @@ import (
 	"reflect"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gin-gonic/gin/binding"
-	"github.com/go-playground/validator/v10"
 	"github.com/miebyte/goutils/errorutils"
 	"github.com/miebyte/goutils/internal/innerlog"
+	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/utils/reflectx"
 )
-
-var (
-	bindLoop = []bindStrategy{
-		&bodyBind{},
-		&headerBind{},
-		&urlBind{},
-		&queryBind{},
-	}
-)
-
-func ParseRequestParams(c *gin.Context, obj any) (err error) {
-	for _, b := range bindLoop {
-		if !b.Need(c) {
-			continue
-		}
-
-		err = b.Bind(c, obj)
-		if err == nil {
-			continue
-		}
-
-		switch err.(type) {
-		case validator.ValidationErrors:
-			err = nil
-		case binding.SliceValidationError:
-			err = nil
-		default:
-			return err
-		}
-	}
-
-	return nil
-}
-
-func ValidateRequestParams(obj any) (err error) {
-	return binding.Validator.ValidateStruct(obj)
-}
 
 type requestHandler[Q any] func(c *gin.Context, req *Q)
 
-func bindAndValidate[Q any](c *gin.Context) (*Q, error) {
-	requestPtr := new(Q)
-
-	if err := ParseRequestParams(c, requestPtr); err != nil {
-		innerlog.Logger.Errorc(c, "parse request params failed: %v", err)
-		return nil, err
-	}
-
-	if err := ValidateRequestParams(requestPtr); err != nil {
-		return nil, err
-	}
-
-	return requestPtr, nil
-}
-
 func isValidHTTPStatusCode(code int) bool {
 	return code >= 100 && code < 600 && http.StatusText(code) != ""
+}
+
+func RequestHandler[Q any](fn requestHandler[Q]) gin.HandlerFunc {
+	reqType := reflect.TypeOf((*Q)(nil)).Elem()
+	reqKind := reflectx.ResolveBaseKind(reqType)
+	reqStrategies := resolveStrategies(reqType)
+
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		reqPtr := new(Q)
+
+		if err := bindRequestData(c, reqPtr, reqStrategies); err != nil {
+			logging.Errorc(ctx, "failed to bind request data %T. error: %v", reqPtr, err)
+			ReturnError(c, http.StatusBadRequest, "Failed to bind request data: "+err.Error())
+			return
+		}
+
+		// 数据清洗, 忽略错误
+		modifyErr := modifyRequestData(ctx, reqPtr, reqKind)
+		if modifyErr != nil {
+			logging.Errorc(ctx, "failed to modify reqPtr(%T). error: %v", reqPtr, modifyErr)
+		}
+
+		// 数据校验
+		validateErr := validateRequestData(ctx, reqPtr, reqKind)
+		if validateErr != nil {
+			handleValidateError(c, validateErr)
+			return
+		}
+
+		fn(c, reqPtr)
+	}
+}
+
+type requestResponseHandler[Q any, P any] func(c *gin.Context, req *Q) (resp *P, err error)
+
+func RequestResponseHandler[Q any, P any](fn requestResponseHandler[Q, P]) gin.HandlerFunc {
+	reqType := reflect.TypeOf((*Q)(nil)).Elem()
+	reqKind := reflectx.ResolveBaseKind(reqType)
+	reqStrategies := resolveStrategies(reqType)
+
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		reqPtr := new(Q)
+
+		if err := bindRequestData(c, reqPtr, reqStrategies); err != nil {
+			logging.Errorc(ctx, "failed to bind request data %T. error: %v", reqPtr, err)
+			ReturnError(c, http.StatusBadRequest, "Failed to bind request data: "+err.Error())
+			return
+		}
+
+		// 数据清洗, 忽略错误
+		modifyErr := modifyRequestData(ctx, reqPtr, reqKind)
+		if modifyErr != nil {
+			logging.Errorc(ctx, "failed to modify reqPtr(%T). error: %v", reqPtr, modifyErr)
+		}
+
+		// 数据校验
+		validateErr := validateRequestData(ctx, reqPtr, reqKind)
+		if validateErr != nil {
+			handleValidateError(c, validateErr)
+			return
+		}
+
+		resp, err := fn(c, reqPtr)
+		if err != nil {
+			handleError(c, err)
+			return
+		}
+
+		if resp == nil {
+			return
+		}
+
+		c.JSON(http.StatusOK, SuccessRet(resp))
+	}
 }
 
 func handleError(c *gin.Context, err error) {
@@ -83,66 +107,6 @@ func handleError(c *gin.Context, err error) {
 		return
 	}
 	parseError(c, err)
-}
-
-func RequestHandler[Q any](fn requestHandler[Q]) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		req, err := bindAndValidate[Q](c)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, ErrorRet(http.StatusBadRequest, err.Error()))
-			return
-		}
-
-		fn(c, req)
-	}
-}
-
-type requestResponseHandler[Q any, P any] func(c *gin.Context, req *Q) (resp *P, err error)
-
-func RequestResponseHandler[Q any, P any](fn requestResponseHandler[Q, P]) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		req, err := bindAndValidate[Q](c)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, ErrorRet(http.StatusBadRequest, err.Error()))
-			return
-		}
-
-		resp, err := fn(c, req)
-		if err != nil {
-			handleError(c, err)
-			return
-		}
-
-		c.JSON(http.StatusOK, SuccessRet(resp))
-	}
-}
-
-type responseHandler[P any] func(c *gin.Context) (resp *P, err error)
-
-func ResponseHandler[P any](fn responseHandler[P]) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		resp, err := fn(c)
-		if err != nil {
-			parseError(c, err)
-			return
-		}
-
-		c.JSON(http.StatusOK, SuccessRet(resp))
-	}
-}
-
-type errorReturnHandler func(c *gin.Context) (err error)
-
-func ErrorReturnHandler(fn errorReturnHandler) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		err := fn(c)
-		if err != nil {
-			parseError(c, err)
-			return
-		}
-
-		c.JSON(http.StatusOK, SuccessRet[any](nil))
-	}
 }
 
 func parseError(c *gin.Context, err error) {
@@ -174,33 +138,6 @@ func parseError(c *gin.Context, err error) {
 
 	c.JSON(httpCode, ErrorRet(errCode, message))
 	innerlog.Logger.Errorf("handle request: %s error: %v", c.Request.URL.Path, err)
-}
-
-type requestWithErrorHandler[Q any] func(c *gin.Context, req *Q) (err error)
-
-func RequestWithErrorHandler[Q any](fn requestWithErrorHandler[Q]) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		requestPtr := new(Q)
-		var err error
-
-		if err = ParseRequestParams(c, requestPtr); err != nil {
-			innerlog.Logger.Errorc(c, "parse request params failed: %v", err)
-			c.JSON(http.StatusBadRequest, ErrorRet(http.StatusBadRequest, err.Error()))
-			return
-		}
-
-		if err = ValidateRequestParams(requestPtr); err != nil {
-			c.JSON(http.StatusBadRequest, ErrorRet(http.StatusBadRequest, err.Error()))
-			return
-		}
-
-		if err := fn(c, requestPtr); err != nil {
-			parseError(c, err)
-			return
-		}
-
-		c.JSON(http.StatusOK, SuccessRet[any](nil))
-	}
 }
 
 func prepareMount[T any]() error {

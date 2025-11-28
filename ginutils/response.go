@@ -8,7 +8,16 @@
 
 package ginutils
 
-import "github.com/gin-gonic/gin"
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+const (
+	successCode = 0
+	failedCode  = -1
+)
 
 type Ret[T any] struct {
 	Code    int `json:"code"`
@@ -17,12 +26,18 @@ type Ret[T any] struct {
 }
 
 func SuccessRet[T any](data T) *Ret[T] {
-	return &Ret[T]{Code: 200, Data: data, Message: "success"}
+	return &Ret[T]{Code: successCode, Data: data, Message: "success"}
 }
 
-func ErrorRet(code int, message any) *Ret[any] {
-	var msg any
+func ErrorRet(message any) *Ret[any] {
+	var (
+		msg  any
+		code = failedCode
+	)
 	switch m := message.(type) {
+	case ErrCoder:
+		code = m.Code()
+		msg = m.Error()
 	case string:
 		msg = m
 	case error:
@@ -35,9 +50,9 @@ func ErrorRet(code int, message any) *Ret[any] {
 }
 
 func ReturnSuccess(c *gin.Context, data any) {
-	c.JSON(200, SuccessRet(data))
+	c.JSON(http.StatusOK, SuccessRet(data))
 }
 
-func ReturnError(c *gin.Context, code int, message any) {
-	c.JSON(code, ErrorRet(code, message))
+func ReturnError(c *gin.Context, message any) {
+	c.JSON(http.StatusOK, ErrorRet(message))
 }

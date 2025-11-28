@@ -14,7 +14,6 @@ import (
 	"reflect"
 
 	"github.com/gin-gonic/gin"
-	"github.com/miebyte/goutils/errorutils"
 	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/miebyte/goutils/logging"
 	"github.com/miebyte/goutils/utils/reflectx"
@@ -37,7 +36,7 @@ func RequestHandler[Q any](fn requestHandler[Q]) gin.HandlerFunc {
 
 		if err := bindRequestData(c, reqPtr, reqStrategies); err != nil {
 			logging.Errorc(ctx, "failed to bind request data %T. error: %v", reqPtr, err)
-			ReturnError(c, http.StatusBadRequest, "Failed to bind request data: "+err.Error())
+			ReturnError(c, "Failed to bind request data: "+err.Error())
 			return
 		}
 
@@ -71,7 +70,7 @@ func RequestResponseHandler[Q any, P any](fn requestResponseHandler[Q, P]) gin.H
 
 		if err := bindRequestData(c, reqPtr, reqStrategies); err != nil {
 			logging.Errorc(ctx, "failed to bind request data %T. error: %v", reqPtr, err)
-			ReturnError(c, http.StatusBadRequest, "Failed to bind request data: "+err.Error())
+			ReturnError(c, "Failed to bind request data: "+err.Error())
 			return
 		}
 
@@ -106,38 +105,8 @@ func handleError(c *gin.Context, err error) {
 	if err == nil {
 		return
 	}
-	parseError(c, err)
-}
-
-func parseError(c *gin.Context, err error) {
-	var (
-		httpCode = http.StatusBadRequest
-		errCode  int
-		message  string
-	)
-
-	switch e := err.(type) {
-	case errorutils.ErrorR:
-		errCode = e.Code()
-		message = e.String()
-	default:
-		status := c.Writer.Status()
-		if status != http.StatusOK {
-			errCode = status
-		}
-
-		if errCode == 0 {
-			errCode = http.StatusBadRequest
-		}
-		message = err.Error()
-	}
-
-	if isValidHTTPStatusCode(errCode) {
-		httpCode = errCode
-	}
-
-	c.JSON(httpCode, ErrorRet(errCode, message))
-	innerlog.Logger.Errorf("handle request: %s error: %v", c.Request.URL.Path, err)
+	ReturnError(c, err)
+	innerlog.Logger.Errorc(c.Request.Context(), "handle request: %s error: %v", c.Request.URL.Path, err)
 }
 
 func prepareMount[T any]() error {

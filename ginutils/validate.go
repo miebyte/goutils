@@ -3,7 +3,6 @@ package ginutils
 import (
 	"context"
 	"errors"
-	"net/http"
 	"reflect"
 	"strings"
 
@@ -58,7 +57,7 @@ func handleValidateError(c *gin.Context, err error) {
 		}
 		errStr := strings.Join(errStrs, ";")
 		logging.Errorc(c.Request.Context(), "validator req data failed. error: %v", errStr)
-		ReturnError(c, http.StatusBadRequest, errStr)
+		ReturnError(c, errStr)
 		return
 	}
 }

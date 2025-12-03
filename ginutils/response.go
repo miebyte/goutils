@@ -15,6 +15,12 @@ import (
 )
 
 const (
+	DefaultBindRequestFailedCode         = http.StatusBadRequest
+	DefaultValidateRequestDataFailedCode = http.StatusBadRequest
+	DefaultHandleResponseFailedCode      = http.StatusInternalServerError
+)
+
+const (
 	successCode = 0
 	failedCode  = -1
 )
@@ -55,4 +61,8 @@ func ReturnSuccess(c *gin.Context, data any) {
 
 func ReturnError(c *gin.Context, message any) {
 	c.JSON(http.StatusOK, ErrorRet(message))
+}
+
+func ReturnErrorWithCode(c *gin.Context, code int, message any) {
+	c.JSON(code, ErrorRet(message))
 }

@@ -21,10 +21,6 @@ import (
 
 type requestHandler[Q any] func(c *gin.Context, req *Q)
 
-func isValidHTTPStatusCode(code int) bool {
-	return code >= 100 && code < 600 && http.StatusText(code) != ""
-}
-
 func RequestHandler[Q any](fn requestHandler[Q]) gin.HandlerFunc {
 	reqType := reflect.TypeOf((*Q)(nil)).Elem()
 	reqKind := reflectx.ResolveBaseKind(reqType)
@@ -36,7 +32,7 @@ func RequestHandler[Q any](fn requestHandler[Q]) gin.HandlerFunc {
 
 		if err := bindRequestData(c, reqPtr, reqStrategies); err != nil {
 			logging.Errorc(ctx, "failed to bind request data %T. error: %v", reqPtr, err)
-			ReturnError(c, "Failed to bind request data: "+err.Error())
+			ReturnErrorWithCode(c, DefaultBindRequestFailedCode, "Failed to bind request data: "+err.Error())
 			return
 		}
 
@@ -70,7 +66,7 @@ func RequestResponseHandler[Q any, P any](fn requestResponseHandler[Q, P]) gin.H
 
 		if err := bindRequestData(c, reqPtr, reqStrategies); err != nil {
 			logging.Errorc(ctx, "failed to bind request data %T. error: %v", reqPtr, err)
-			ReturnError(c, "Failed to bind request data: "+err.Error())
+			ReturnErrorWithCode(c, DefaultBindRequestFailedCode, "Failed to bind request data: "+err.Error())
 			return
 		}
 
@@ -105,7 +101,7 @@ func handleError(c *gin.Context, err error) {
 	if err == nil {
 		return
 	}
-	ReturnError(c, err)
+	ReturnErrorWithCode(c, DefaultHandleResponseFailedCode, err)
 	innerlog.Logger.Errorc(c.Request.Context(), "handle request: %s error: %v", c.Request.URL.Path, err)
 }
 

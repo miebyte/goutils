@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
+	"github.com/miebyte/goutils/logging"
 	"github.com/miebyte/goutils/structutils"
 )
 
@@ -109,7 +110,7 @@ func resolveStrategies(t reflect.Type) []bindStrategy {
 			return
 		}
 
-		for i := 0; i < t.NumField(); i++ {
+		for i := range t.NumField() {
 			field := t.Field(i)
 			if field.Anonymous {
 				traverse(field.Type)
@@ -152,25 +153,24 @@ func resolveStrategies(t reflect.Type) []bindStrategy {
 	traverse(t)
 
 	var final []bindStrategy
-	for _, s := range strategies {
-		switch s.(type) {
-		case *bodyBind:
-			if hasBody {
-				final = append(final, s)
-			}
-		case *urlBind:
-			if hasPath {
-				final = append(final, s)
-			}
-		case *queryBind:
-			if hasQuery {
-				final = append(final, s)
-			}
-		case *headerBind:
-			if hasHeader {
-				final = append(final, s)
-			}
-		}
+	if hasBody {
+		final = append(final, &bodyBind{})
+	}
+	if hasPath {
+		final = append(final, &urlBind{})
+	}
+	if hasQuery {
+		final = append(final, &queryBind{})
+	}
+
+	if hasHeader {
+		final = append(final, &headerBind{})
+	}
+
+	// 如果最终没有策略，则使用 body 策略
+	if len(final) == 0 {
+		logging.Debugf("no strategy found, use body strategy")
+		final = append(final, &bodyBind{})
 	}
 
 	return final

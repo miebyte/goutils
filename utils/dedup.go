@@ -11,7 +11,7 @@ func dupSmall[T comparable](slice []T) []T {
 	idx := 0
 	for _, s := range slice {
 		var j int
-		for j := range idx {
+		for j = 0; j < idx; j++ {
 			if slice[j] == s {
 				break
 			}

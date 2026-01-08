@@ -51,13 +51,27 @@ func (c *MysqlConfig) generateDSN() string {
 }
 
 func (conf *MysqlConfig) DialMysqlGorm() (*gorm.DB, error) {
+	return conf.DialMysqlGormWithConfig(nil)
+}
+
+// DialMysqlGormWithConfig 使用自定义 gorm 配置创建连接；gormConf 为 nil 时使用默认配置。
+func (conf *MysqlConfig) DialMysqlGormWithConfig(gormConf *gorm.Config) (*gorm.DB, error) {
 	if share.Debug() {
 		GormLogger = GormLogger.LogMode(logger.Info)
 	}
 
-	gormConf := &gorm.Config{
-		PrepareStmt: true,
-		Logger:      GormLogger,
+	if gormConf == nil {
+		gormConf = &gorm.Config{
+			PrepareStmt: true,
+			Logger:      GormLogger,
+		}
+	} else {
+		// 复制 gormConf 避免修改原始配置
+		cfg := *gormConf
+		gormConf = &cfg
+		if gormConf.Logger == nil {
+			gormConf.Logger = GormLogger
+		}
 	}
 
 	db, err := gorm.Open(
@@ -74,7 +88,7 @@ func (conf *MysqlConfig) DialMysqlGorm() (*gorm.DB, error) {
 	}
 
 	sqlDB.SetMaxIdleConns(conf.PoolSize)
-	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetMaxOpenConns(conf.PoolSize)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	return db, nil
@@ -82,6 +96,10 @@ func (conf *MysqlConfig) DialMysqlGorm() (*gorm.DB, error) {
 
 func DialMysqlGorm(conf *MysqlConfig) (*gorm.DB, error) {
 	return conf.DialMysqlGorm()
+}
+
+func DialMysqlGormWithConfig(conf *MysqlConfig, gormConf *gorm.Config) (*gorm.DB, error) {
+	return conf.DialMysqlGormWithConfig(gormConf)
 }
 
 type MysqlPool map[string]*gorm.DB
@@ -103,10 +121,27 @@ func (mc MysqlConfigMap) DialMysqlGorm(names ...string) (*gorm.DB, error) {
 }
 
 func (mc MysqlConfigMap) DialGormPool() (MysqlPool, error) {
+	return mc.DialGormPoolWithConfig(nil)
+}
+
+func (mc MysqlConfigMap) DialMysqlGormWithConfig(name string, gormConf *gorm.Config) (*gorm.DB, error) {
+	if name == "" {
+		name = "default"
+	}
+
+	conf, exists := mc[name]
+	if !exists {
+		return nil, fmt.Errorf("mysql(%s) config not exists", name)
+	}
+
+	return conf.DialMysqlGormWithConfig(gormConf)
+}
+
+func (mc MysqlConfigMap) DialGormPoolWithConfig(gormConf *gorm.Config) (MysqlPool, error) {
 	mp := make(MysqlPool)
 
 	for name, conf := range mc {
-		db, err := conf.DialMysqlGorm()
+		db, err := conf.DialMysqlGormWithConfig(gormConf)
 		if err != nil {
 			return nil, errors.Wrapf(err, "dial mysqlPool of %s", name)
 		}

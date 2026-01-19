@@ -9,18 +9,36 @@
 package share
 
 import (
-	"os"
+	"strings"
 
 	"github.com/miebyte/goutils/utils"
 )
 
+const (
+	ServiceNameKey = "ServiceName"
+	HostnameKey    = "HOSTNAME"
+)
+
 var (
-	ServiceName func() string = func() string { return "" }
-	Tag         func() string = func() string { return "" }
+	ServiceName func() string
+	Tag         func() string
 	Debug       func() bool   = func() bool { return false }
 	UseConsul   func() bool   = func() bool { return false }
 	ConsulAddr  func() string = func() string { return "" }
+
+	HostName = utils.GetEnvByDefualt(HostnameKey, HostnameKey)
 )
+
+func init() {
+	sn := utils.GetEnvByDefualt(ServiceNameKey, ServiceNameKey)
+	segs := strings.SplitN(sn, ":", 2)
+	if len(segs) >= 2 {
+		SetServiceName(segs[0])
+		SetTag(segs[1])
+	} else {
+		SetServiceName(sn)
+	}
+}
 
 func SetServiceName(name string) {
 	ServiceName = func() string { return name }
@@ -29,17 +47,3 @@ func SetServiceName(name string) {
 func SetTag(tag string) {
 	Tag = func() string { return tag }
 }
-
-const (
-	ProjectNameKey = "PROJECT_NAME"
-	NamespaceKey   = "NAMESPACE"
-	HostnameKey    = "HOSTNAME"
-	PodIpKey       = "POD_IP"
-)
-
-var (
-	HostName     = os.Getenv(HostnameKey)
-	PodIp        = os.Getenv(PodIpKey)
-	ProjectName  = utils.GetEnvByDefualt(ProjectNameKey, ProjectNameKey)
-	PodNamespace = utils.GetEnvByDefualt(NamespaceKey, NamespaceKey)
-)

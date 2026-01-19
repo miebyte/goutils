@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/miebyte/goutils/internal/innerlog"
@@ -119,14 +118,7 @@ func (c *CoresService) serve() error {
 
 func (c *CoresService) injectServiceName() {
 	if share.ServiceName() != "" {
-		segs := strings.SplitN(share.ServiceName(), ":", 2)
-		if len(segs) >= 2 {
-			c.serviceName = segs[0]
-			c.tags = append(c.tags, segs[1])
-		} else {
-			c.serviceName = share.ServiceName()
-		}
-
+		c.serviceName = share.ServiceName()
 		c.ctx = logging.With(c.ctx, "Service", c.serviceName)
 	}
 

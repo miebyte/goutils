@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/miebyte/goutils/discover"
@@ -21,7 +22,7 @@ import (
 )
 
 const (
-	CUSTOMER_REGISTER_HOST = "GOUTILS_CUSTOMER_HOST"
+	CUSTOMER_REGISTER_ADDR = "GOUTILS_CUSTOMER_ADDR"
 )
 
 func (c *CoresService) registerService() mountFn {
@@ -31,10 +32,15 @@ func (c *CoresService) registerService() mountFn {
 		fn: func(ctx context.Context) error {
 			registerAddr := c.listenAddr
 
-			customRegisterHost := os.Getenv(CUSTOMER_REGISTER_HOST)
+			customRegisterHost := os.Getenv(CUSTOMER_REGISTER_ADDR)
 			if customRegisterHost != "" {
-				_, port, _ := net.SplitHostPort(c.listenAddr)
-				registerAddr = fmt.Sprintf("%s:%s", customRegisterHost, port)
+				hostSplit := strings.Split(customRegisterHost, ":")
+				if len(hostSplit) == 2 {
+					registerAddr = customRegisterHost
+				} else {
+					_, port, _ := net.SplitHostPort(c.listenAddr)
+					registerAddr = fmt.Sprintf("%s:%s", customRegisterHost, port)
+				}
 			}
 
 			err := discover.GetServiceFinder().RegisterServiceWithTags(c.serviceName, registerAddr, c.tags)

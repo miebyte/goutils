@@ -10,6 +10,7 @@ package flags
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"github.com/miebyte/goutils/discover"
@@ -64,13 +65,14 @@ func Parse(opts ...OptionFunc) {
 	pflag.Parse()
 
 	setDebugMod()
+	parseServiceName()
 
 	if opt.UseRemote() {
 		if config() != "" {
 			defaultConfigProvider = provider.NewLocalProvider(config())
 		} else {
 			checkServiceName()
-			defaultConfigProvider = provider.NewConsulProvider(share.ServiceName())
+			defaultConfigProvider = provider.NewConsulProvider(share.ServiceName(), share.Tag())
 			discover.SetConsulFinder()
 		}
 	} else {
@@ -95,6 +97,15 @@ func Parse(opts ...OptionFunc) {
 	setDebugMod()
 
 	snail.Init()
+}
+
+func parseServiceName() {
+	serviceName := share.ServiceName()
+	segs := strings.SplitN(serviceName, ":", 2)
+	if len(segs) >= 2 {
+		share.SetServiceName(segs[0])
+		share.SetTag(segs[1])
+	}
 }
 
 func setDebugMod() {

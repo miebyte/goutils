@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/miebyte/goutils/debounce"
-	"github.com/miebyte/goutils/internal/buildinfo"
 	"github.com/miebyte/goutils/internal/innerlog"
+	"github.com/miebyte/goutils/internal/share"
 )
 
 var (
@@ -18,7 +18,7 @@ var (
 
 // Report reports given message.
 func Report(msg string) {
-	clusterName := buildinfo.GetServiceName()
+	clusterName := share.GetServiceName()
 
 	reported := lessExecutor.DoOrDiscard(func() {
 		var builder strings.Builder
@@ -26,7 +26,7 @@ func Report(msg string) {
 		if len(clusterName) > 0 {
 			builder.WriteString(fmt.Sprintf("cluster: %s\n", clusterName))
 		}
-		builder.WriteString(fmt.Sprintf("host: %s\n", buildinfo.GetHostName()))
+		builder.WriteString(fmt.Sprintf("host: %s\n", share.GetHostName()))
 		dp := atomic.SwapInt32(&dropped, 0)
 		if dp > 0 {
 			builder.WriteString(fmt.Sprintf("dropped: %d\n", dp))

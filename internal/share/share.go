@@ -11,6 +11,7 @@ package share
 import (
 	"strings"
 
+	"github.com/miebyte/goutils/buildinfo"
 	"github.com/miebyte/goutils/utils"
 )
 
@@ -20,8 +21,8 @@ const (
 )
 
 var (
-	ServiceName func() string = func() string { return "" }
-	Tag         func() string = func() string { return "" }
+	ServiceName func() string = func() string { return buildinfo.ServiceName }
+	Tag         func() string = func() string { return buildinfo.Version }
 	Debug       func() bool   = func() bool { return false }
 	UseConsul   func() bool   = func() bool { return false }
 	ConsulAddr  func() string = func() string { return "" }
@@ -46,4 +47,12 @@ func SetServiceName(name string) {
 
 func SetTag(tag string) {
 	Tag = func() string { return tag }
+}
+
+func GetHostName() string {
+	return HostName
+}
+
+func GetServiceName() string {
+	return ServiceName()
 }

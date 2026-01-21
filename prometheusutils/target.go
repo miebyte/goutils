@@ -1,7 +1,7 @@
 package prometheusutils
 
 import (
-	"github.com/miebyte/goutils/internal/buildinfo"
+	"github.com/miebyte/goutils/internal/share"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -21,7 +21,7 @@ func CreateRegistry() *prometheus.Registry {
 // GetCommonLabelsMap 获取公共标签
 func GetCommonLabelsMap() map[string]string {
 	return map[string]string{
-		"server_name": buildinfo.GetServiceName(),
+		"server_name": share.GetServiceName(),
 	}
 }
 

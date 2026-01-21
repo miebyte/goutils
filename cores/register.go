@@ -49,7 +49,7 @@ func (c *CoresService) registerService() mountFn {
 				return errors.Wrap(err, "registerService")
 			}
 
-			innerlog.Logger.Infoc(ctx, "Register service(%s) success", c.serviceName)
+			innerlog.Logger.Infoc(ctx, "Register service(%s) tags(%v) success", c.serviceName, c.tags)
 
 			// Wait for terminate
 			<-ctx.Done()

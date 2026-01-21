@@ -3,7 +3,6 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/Masterminds/semver"
 	"github.com/hashicorp/consul/api"
@@ -19,14 +18,7 @@ type ConsulProvider struct {
 	tag         string
 }
 
-func NewConsulProvider(serviceName string) *ConsulProvider {
-	segs := strings.SplitN(serviceName, ":", 2)
-	tag := "dev"
-	if len(segs) >= 2 {
-		serviceName = segs[0]
-		tag = segs[1]
-	}
-
+func NewConsulProvider(serviceName, tag string) *ConsulProvider {
 	return &ConsulProvider{serviceName: serviceName, tag: tag}
 }
 

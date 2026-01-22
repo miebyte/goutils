@@ -27,6 +27,12 @@ var (
 
 func init() {
 	GormLogger = NewGormLogger(WithSlowThreshold(time.Second * 10))
+	// 默认 Warn 模式, 只会输出 Warn 和 Error 级别的日志
+	GormLogger = GormLogger.LogMode(logger.Warn)
+}
+
+// EnableDebug 启用 Debug 模式, 会输出所有级别的日志
+func EnableDebug() {
 	GormLogger = GormLogger.LogMode(logger.Info)
 }
 
@@ -95,9 +101,19 @@ func (gl *gormLogger) wrapPrefix(ctx context.Context) context.Context {
 	return ctx
 }
 
+// LogMode 设置日志级别
+// 这里的日志级别设置和 logging 包的逻辑有点不一样
+// 如果通过 LogMode 设置为 Info 级别, 则会在 Debug 模式下输出所有级别的日志
 func (gl *gormLogger) LogMode(lv logger.LogLevel) logger.Interface {
-	if lv == logger.Info {
+	switch lv {
+	case logger.Info:
 		gl.logger.Enable(level.LevelDebug)
+	case logger.Silent:
+		gl.logger.Enable(level.LevelInfo)
+	case logger.Warn:
+		gl.logger.Enable(level.LevelWarn)
+	case logger.Error:
+		gl.logger.Enable(level.LevelError)
 	}
 
 	newLogger := *gl
@@ -124,7 +140,6 @@ func (gl *gormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql
 
 	ctx = gl.wrapPrefix(ctx)
 	elapsed := time.Since(begin)
-
 	switch {
 	case err != nil && (!errors.Is(err, logger.ErrRecordNotFound) || !gl.ignoreRecordNotFoundError):
 		sql, rows := fc()

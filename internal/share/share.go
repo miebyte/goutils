@@ -31,7 +31,11 @@ var (
 )
 
 func init() {
-	sn := utils.GetEnvByDefualt(ServiceNameKey, ServiceNameKey)
+	sn := utils.GetEnvByDefualt(ServiceNameKey, "")
+	if sn == "" {
+		return
+	}
+
 	segs := strings.SplitN(sn, ":", 2)
 	if len(segs) >= 2 {
 		SetServiceName(segs[0])

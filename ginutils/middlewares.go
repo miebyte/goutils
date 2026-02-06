@@ -27,7 +27,7 @@ const maxBodyLen = 1024
 
 var (
 	Logger              *logging.PrettyLogger
-	requestBodyReplacer = strings.NewReplacer("\n", "", "\n ", "", "\t", "")
+	requestBodyReplacer = strings.NewReplacer("\n", "", "\n ", "", "\t", "", " ", "")
 )
 
 func init() {
@@ -129,4 +129,6 @@ func customRecoveryFn(c *gin.Context, err any) {
 		"[GinRecover] panic error: %v. path=%s url=%s method=%s host=%s ip=%s",
 		err, c.Request.URL.Path, c.Request.URL, c.Request.Method, c.Request.Host, c.ClientIP(),
 	)
+	ReturnError(c, "System Error")
+
 }

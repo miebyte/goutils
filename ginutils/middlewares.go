@@ -11,11 +11,10 @@ package ginutils
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,8 +25,7 @@ import (
 const maxBodyLen = 1024
 
 var (
-	Logger              *logging.PrettyLogger
-	requestBodyReplacer = strings.NewReplacer("\n", "", "\n ", "", "\t", "", " ", "")
+	Logger *logging.PrettyLogger
 )
 
 func init() {
@@ -58,12 +56,19 @@ func requestBody(c *gin.Context) string {
 	}
 	bodyData, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		return fmt.Sprintf("read request body err: %s", err.Error())
+		logging.Errorc(c.Request.Context(), "[requestBody] read req body err: %v", err)
+		return ""
 	}
 	_ = c.Request.Body.Close()
 	c.Request.Body = io.NopCloser(bytes.NewReader(bodyData))
 
-	return requestBodyReplacer.Replace(string(bodyData[:min(len(bodyData), maxBodyLen)]))
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, bodyData); err != nil {
+		logging.Errorc(c.Request.Context(), "[requestBody] json.Compact body err: %v", err)
+		return ""
+	}
+
+	return string(buf.Bytes()[:min(len(bodyData), maxBodyLen)])
 }
 
 func LoggerMiddleware(loggers ...logging.Logger) gin.HandlerFunc {

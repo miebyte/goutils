@@ -12,6 +12,8 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"reflect"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -25,7 +27,7 @@ func Md5(src any) []byte {
 	case string:
 		h.Write([]byte(val))
 	default:
-		h.Write([]byte(fmt.Sprint(src)))
+		h.Write(fmt.Append(nil, src))
 	}
 
 	bs := h.Sum(nil)
@@ -47,7 +49,7 @@ func AppendAny(dst []byte, v any) []byte {
 	case []byte:
 		dst = append(dst, val...)
 	case string:
-		dst = append(dst, val...)
+		dst = strconv.AppendQuote(dst, val)
 	case int:
 		dst = strconv.AppendInt(dst, int64(val), 10)
 	case int8:
@@ -83,7 +85,69 @@ func AppendAny(dst []byte, v any) []byte {
 	case fmt.Stringer:
 		dst = append(dst, val.String()...)
 	default:
-		dst = append(dst, fmt.Sprint(v)...)
+		dst = appendComplexType(dst, v)
 	}
 	return dst
+}
+
+func appendComplexType(dst []byte, v any) []byte {
+	// 复杂类型统一走稳定编码，避免 map 顺序不确定。
+	rv := reflect.ValueOf(v)
+	if !rv.IsValid() {
+		return append(dst, "<nil>"...)
+	}
+	for rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return append(dst, "<nil>"...)
+		}
+		rv = rv.Elem()
+	}
+
+	switch rv.Kind() {
+	case reflect.Map:
+		type kv struct {
+			key     reflect.Value
+			sortKey string
+		}
+		keys := rv.MapKeys()
+		items := make([]kv, 0, len(keys))
+		for _, k := range keys {
+			ki := k.Interface()
+			items = append(items, kv{
+				key:     k,
+				sortKey: fmt.Sprintf("%T:%v", ki, ki),
+			})
+		}
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].sortKey < items[j].sortKey
+		})
+
+		dst = append(dst, '{')
+		for i, it := range items {
+			kb := AppendAny(nil, it.key.Interface())
+			vb := AppendAny(nil, rv.MapIndex(it.key).Interface())
+			dst = append(dst, kb...)
+			dst = append(dst, ':')
+			dst = append(dst, vb...)
+			if i < len(items)-1 {
+				dst = append(dst, ',')
+			}
+		}
+		dst = append(dst, '}')
+		return dst
+	case reflect.Slice, reflect.Array:
+		dst = append(dst, '[')
+		for i := 0; i < rv.Len(); i++ {
+			elem := rv.Index(i).Interface()
+			eb := AppendAny(nil, elem)
+			dst = append(dst, eb...)
+			if i < rv.Len()-1 {
+				dst = append(dst, ',')
+			}
+		}
+		dst = append(dst, ']')
+		return dst
+	}
+
+	return append(dst, fmt.Sprint(v)...)
 }

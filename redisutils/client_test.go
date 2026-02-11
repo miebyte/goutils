@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,139 +14,141 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func NewRedisClientWithAddr(addr string, db int) *RedisClient {
-	return &RedisClient{
+var (
+	testRedisClient *RedisClient
+)
+
+func TestMain(m *testing.M) {
+	testRedisClient = &RedisClient{
 		Client: redis.NewClient(&redis.Options{
-			Addr: addr,
-			DB:   db,
+			Addr: "localhost:6379",
+			DB:   0,
 		}),
 	}
+	os.Exit(m.Run())
 }
+
 func TestRedisClient_Lock(t *testing.T) {
-	client := setupTestClient(t)
 	ctx := context.Background()
 	key := "test_lock"
 
 	// Clean up any existing lock
-	client.Del(ctx, key)
+	testRedisClient.Del(ctx, key)
 
 	// Test successful lock acquisition
 	t.Run("acquire lock success", func(t *testing.T) {
-		defer cleanupTest(t, client, key)
-		err := client.TryLock(ctx, key, time.Second)
+		defer cleanupTest(t, testRedisClient, key)
+		err := testRedisClient.TryLock(ctx, key, time.Second)
 		assert.NoError(t, err)
 
 		// Verify lock exists
-		exists, err := client.Exists(ctx, key).Result()
+		exists, err := testRedisClient.Exists(ctx, key).Result()
 		assert.NoError(t, err)
 		assert.Equal(t, int64(1), exists)
 
 		// Clean up
-		err = client.Unlock(ctx, key)
+		err = testRedisClient.Unlock(ctx, key)
 		assert.NoError(t, err)
 	})
 
 	// Test lock conflict
 	t.Run("lock conflict", func(t *testing.T) {
 		// First lock
-		err := client.TryLock(ctx, key, time.Second)
+		err := testRedisClient.TryLock(ctx, key, time.Second)
 		assert.NoError(t, err)
 
 		// Try to acquire same lock
-		err = client.TryLock(ctx, key, time.Second)
+		err = testRedisClient.TryLock(ctx, key, time.Second)
 		assert.ErrorIs(t, err, ErrLockAcquireFailed)
 
 		// Clean up
-		err = client.Unlock(ctx, key)
+		err = testRedisClient.Unlock(ctx, key)
 		assert.NoError(t, err)
 	})
 
 	// Test lock expiration
 	t.Run("lock expiration", func(t *testing.T) {
-		err := client.TryLock(ctx, key, 100*time.Millisecond)
+		err := testRedisClient.TryLock(ctx, key, 100*time.Millisecond)
 		assert.NoError(t, err)
 
 		// Wait for lock to expire
 		time.Sleep(200 * time.Millisecond)
 
 		// Should be able to acquire lock again
-		err = client.TryLock(ctx, key, time.Second)
+		err = testRedisClient.TryLock(ctx, key, time.Second)
 		assert.NoError(t, err)
 
 		// Clean up
-		err = client.Unlock(ctx, key)
+		err = testRedisClient.Unlock(ctx, key)
 		assert.NoError(t, err)
 	})
 }
 
 func TestRedisClient_Unlock(t *testing.T) {
-	client := NewRedisClientWithAddr("localhost:6379", 0)
 	ctx := context.Background()
 	key := "test_lock"
 
 	// Clean up any existing lock
-	client.Del(ctx, key)
+	testRedisClient.Del(ctx, key)
 
 	t.Run("unlock success", func(t *testing.T) {
 		// First acquire lock
-		err := client.TryLock(ctx, key, time.Second)
+		err := testRedisClient.TryLock(ctx, key, time.Second)
 		assert.NoError(t, err)
 
 		// Then unlock
-		err = client.Unlock(ctx, key)
+		err = testRedisClient.Unlock(ctx, key)
 		assert.NoError(t, err)
 
 		// Verify lock is gone
-		exists, err := client.Exists(ctx, key).Result()
+		exists, err := testRedisClient.Exists(ctx, key).Result()
 		assert.NoError(t, err)
 		assert.Equal(t, int64(0), exists)
 	})
 
 	t.Run("unlock non-existent lock", func(t *testing.T) {
-		err := client.Unlock(ctx, "non_existent_lock")
+		err := testRedisClient.Unlock(ctx, "non_existent_lock")
 		assert.ErrorIs(t, err, ErrLockNotFound)
 	})
 }
 
 func TestRedisClient_TryLockWithTimeout(t *testing.T) {
-	client := NewRedisClientWithAddr("localhost:6379", 0)
 	ctx := context.Background()
 	key := "test_lock"
 
 	// Clean up any existing lock
-	client.Del(ctx, key)
+	testRedisClient.Del(ctx, key)
 
 	t.Run("acquire with timeout success", func(t *testing.T) {
-		err := client.TryLockWithTimeout(ctx, key, time.Second, 500*time.Millisecond)
+		err := testRedisClient.TryLockWithTimeout(ctx, key, time.Second, 500*time.Millisecond)
 		assert.NoError(t, err)
 
 		// Clean up
-		err = client.Unlock(ctx, key)
+		err = testRedisClient.Unlock(ctx, key)
 		assert.NoError(t, err)
 	})
 
 	t.Run("acquire with timeout failure", func(t *testing.T) {
 		// First lock
-		err := client.TryLock(ctx, key, time.Second)
+		err := testRedisClient.TryLock(ctx, key, time.Second)
 		assert.NoError(t, err)
 
 		// Try to acquire with short timeout
-		err = client.TryLockWithTimeout(ctx, key, time.Second, 200*time.Millisecond)
+		err = testRedisClient.TryLockWithTimeout(ctx, key, time.Second, 200*time.Millisecond)
 		assert.ErrorIs(t, err, ErrLockTimeout)
 
 		// Clean up
-		err = client.Unlock(ctx, key)
+		err = testRedisClient.Unlock(ctx, key)
 		assert.NoError(t, err)
 	})
 }
 
 func TestRedisClient_ConcurrentLock(t *testing.T) {
-	client := NewRedisClientWithAddr("localhost:6379", 0)
 	ctx := context.Background()
 	key := "test_concurrent_lock"
 
 	// Clean up any existing lock
-	client.Del(ctx, key)
+	testRedisClient.Del(ctx, key)
 
 	t.Run("concurrent lock acquisition", func(t *testing.T) {
 		numGoroutines := 10
@@ -158,13 +161,13 @@ func TestRedisClient_ConcurrentLock(t *testing.T) {
 			go func(routineID int) {
 				defer wg.Done()
 
-				err := client.TryLock(ctx, key, time.Second)
+				err := testRedisClient.TryLock(ctx, key, time.Second)
 				if err == nil {
 					atomic.AddInt32(&successCount, 1)
 					// Simulate some work
 					time.Sleep(100 * time.Millisecond)
 					// Release the lock
-					err = client.Unlock(ctx, key)
+					err = testRedisClient.Unlock(ctx, key)
 					assert.NoError(t, err)
 				}
 			}(i)
@@ -177,9 +180,9 @@ func TestRedisClient_ConcurrentLock(t *testing.T) {
 
 	t.Run("concurrent lock with timeout", func(t *testing.T) {
 		// First acquire the lock to ensure other goroutines will timeout
-		err := client.TryLock(ctx, key, 2*time.Second)
+		err := testRedisClient.TryLock(ctx, key, 2*time.Second)
 		assert.NoError(t, err)
-		defer client.Unlock(ctx, key)
+		defer testRedisClient.Unlock(ctx, key)
 
 		numGoroutines := 5
 		timeout := 500 * time.Millisecond
@@ -194,13 +197,13 @@ func TestRedisClient_ConcurrentLock(t *testing.T) {
 			go func(routineID int) {
 				defer wg.Done()
 
-				err := client.TryLockWithTimeout(ctx, key, time.Second, timeout)
+				err := testRedisClient.TryLockWithTimeout(ctx, key, time.Second, timeout)
 				if err == nil {
 					atomic.AddInt32(&successCount, 1)
 					// Simulate some work
 					time.Sleep(50 * time.Millisecond)
 					// Release the lock
-					err = client.Unlock(ctx, key)
+					err = testRedisClient.Unlock(ctx, key)
 					assert.NoError(t, err)
 				} else if errors.Is(err, ErrLockTimeout) {
 					atomic.AddInt32(&timeoutCount, 1)
@@ -235,13 +238,13 @@ func TestRedisClient_ConcurrentLock(t *testing.T) {
 		for i := 0; i < numWorkers; i++ {
 			go func(workerID int) {
 				for taskID := range lockChan {
-					err := client.TryLock(ctx, key, time.Second)
+					err := testRedisClient.TryLock(ctx, key, time.Second)
 					if err == nil {
 						atomic.AddInt32(&successCount, 1)
 						// Simulate some work
 						time.Sleep(10 * time.Millisecond)
 						// Release the lock
-						err = client.Unlock(ctx, key)
+						err = testRedisClient.Unlock(ctx, key)
 						if err != nil {
 							t.Logf("Unlock error in worker %d, task %d: %v", workerID, taskID, err)
 						}
@@ -281,26 +284,25 @@ type ListTestItem struct {
 }
 
 type UserProfile struct {
-	UserID      int64                  `json:"user_id"`
-	Username    string                 `json:"username"`
-	Email       string                 `json:"email"`
-	Age         int                    `json:"age"`
-	IsActive    bool                   `json:"is_active"`
-	Roles       []string               `json:"roles"`
-	Preferences map[string]interface{} `json:"preferences"`
-	CreatedAt   time.Time              `json:"created_at"`
+	UserID      int64          `json:"user_id"`
+	Username    string         `json:"username"`
+	Email       string         `json:"email"`
+	Age         int            `json:"age"`
+	IsActive    bool           `json:"is_active"`
+	Roles       []string       `json:"roles"`
+	Preferences map[string]any `json:"preferences"`
+	CreatedAt   time.Time      `json:"created_at"`
 }
 
 func TestRedisClient_SetValue_GetValue(t *testing.T) {
-	client := setupTestClient(t)
 	ctx := context.Background()
 
 	tests := []struct {
 		name     string
 		key      string
-		value    interface{}
-		result   interface{}
-		expected interface{}
+		value    any
+		result   any
+		expected any
 	}{
 		{
 			name:     "String Value",
@@ -378,18 +380,18 @@ func TestRedisClient_SetValue_GetValue(t *testing.T) {
 		{
 			name: "Map String Interface Value",
 			key:  "test:map",
-			value: map[string]interface{}{
+			value: map[string]any{
 				"name":    "John",
 				"age":     25,
 				"scores":  []int{95, 88, 92},
 				"active":  true,
 				"balance": 123.45,
 			},
-			result: &map[string]interface{}{},
-			expected: map[string]interface{}{
+			result: &map[string]any{},
+			expected: map[string]any{
 				"name":    "John",
 				"age":     float64(25), // JSON numbers are decoded as float64
-				"scores":  []interface{}{float64(95), float64(88), float64(92)},
+				"scores":  []any{float64(95), float64(88), float64(92)},
 				"active":  true,
 				"balance": 123.45,
 			},
@@ -397,20 +399,20 @@ func TestRedisClient_SetValue_GetValue(t *testing.T) {
 		{
 			name: "Slice Value",
 			key:  "test:slice",
-			value: []interface{}{
+			value: []any{
 				"string",
 				42,
 				true,
 				3.14,
 				[]string{"nested", "slice"},
 			},
-			result: &[]interface{}{},
-			expected: []interface{}{
+			result: &[]any{},
+			expected: []any{
 				"string",
 				float64(42),
 				true,
 				3.14,
-				[]interface{}{"nested", "slice"},
+				[]any{"nested", "slice"},
 			},
 		},
 		{
@@ -423,7 +425,7 @@ func TestRedisClient_SetValue_GetValue(t *testing.T) {
 				Age:      25,
 				IsActive: true,
 				Roles:    []string{"admin", "user"},
-				Preferences: map[string]interface{}{
+				Preferences: map[string]any{
 					"theme":         "dark",
 					"language":      "en",
 					"timezone":      "UTC",
@@ -439,7 +441,7 @@ func TestRedisClient_SetValue_GetValue(t *testing.T) {
 				Age:      25,
 				IsActive: true,
 				Roles:    []string{"admin", "user"},
-				Preferences: map[string]interface{}{
+				Preferences: map[string]any{
 					"theme":         "dark",
 					"language":      "en",
 					"timezone":      "UTC",
@@ -453,11 +455,11 @@ func TestRedisClient_SetValue_GetValue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test SetValue
-			err := client.SetValue(ctx, tt.key, tt.value, time.Minute)
+			err := testRedisClient.SetValue(ctx, tt.key, tt.value, time.Minute)
 			assert.NoError(t, err)
 
 			// Test GetValue
-			err = client.GetValue(ctx, tt.key, tt.result)
+			err = testRedisClient.GetValue(ctx, tt.key, tt.result)
 			assert.NoError(t, err)
 
 			// Compare results based on type
@@ -482,28 +484,27 @@ func TestRedisClient_SetValue_GetValue(t *testing.T) {
 				assert.Equal(t, tt.expected, *v)
 			case *UserProfile:
 				assert.Equal(t, tt.expected, *v)
-			case *map[string]interface{}:
+			case *map[string]any:
 				assert.Equal(t, tt.expected, *v)
-			case *[]interface{}:
+			case *[]any:
 				assert.Equal(t, tt.expected, *v)
 			default:
 				t.Errorf("未处理的类型: %T", v)
 			}
 
 			// Clean up
-			client.Del(ctx, tt.key)
+			testRedisClient.Del(ctx, tt.key)
 		})
 	}
 }
 
 func TestRedisClient_GetValue_TypeConversionErrors(t *testing.T) {
-	client := NewRedisClientWithAddr("localhost:6379", 0)
 	ctx := context.Background()
 
 	tests := []struct {
 		name        string
 		value       string
-		result      interface{}
+		result      any
 		expectedErr string
 	}{
 		{
@@ -531,32 +532,30 @@ func TestRedisClient_GetValue_TypeConversionErrors(t *testing.T) {
 			key := "test:conversion"
 
 			// Set the test value
-			err := client.Client.Set(ctx, key, tt.value, time.Minute).Err()
+			err := testRedisClient.Set(ctx, key, tt.value, time.Minute).Err()
 			assert.NoError(t, err)
 
 			// Try to get with wrong type
-			err = client.GetValue(ctx, key, tt.result)
+			err = testRedisClient.GetValue(ctx, key, tt.result)
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expectedErr)
 
 			// Clean up
-			client.Del(ctx, key)
+			testRedisClient.Del(ctx, key)
 		})
 	}
 }
 
 func TestRedisClient_GetValue_NotFound(t *testing.T) {
-	client := NewRedisClientWithAddr("localhost:6379", 0)
 	ctx := context.Background()
 
 	var result string
-	err := client.GetValue(ctx, "non:existent:key", &result)
+	err := testRedisClient.GetValue(ctx, "non:existent:key", &result)
 	assert.Error(t, err)
 	assert.Equal(t, redis.Nil, err)
 }
 
 func TestRedisClient_SetValue_InvalidJSON(t *testing.T) {
-	client := NewRedisClientWithAddr("localhost:6379", 0)
 	ctx := context.Background()
 
 	// Create a struct with a channel which cannot be JSON marshaled
@@ -566,30 +565,28 @@ func TestRedisClient_SetValue_InvalidJSON(t *testing.T) {
 		Ch: make(chan int),
 	}
 
-	err := client.SetValue(ctx, "test:invalid", invalidStruct, time.Minute)
+	err := testRedisClient.SetValue(ctx, "test:invalid", invalidStruct, time.Minute)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "json marshal failed")
 }
 
 func TestRedisClient_GetValue_InvalidJSON(t *testing.T) {
-	client := NewRedisClientWithAddr("localhost:6379", 0)
 	ctx := context.Background()
 
 	// Set invalid JSON string
-	err := client.Client.Set(ctx, "test:invalid:json", "{invalid json}", time.Minute).Err()
+	err := testRedisClient.Set(ctx, "test:invalid:json", "{invalid json}", time.Minute).Err()
 	assert.NoError(t, err)
 
 	var result TestStruct
-	err = client.GetValue(ctx, "test:invalid:json", &result)
+	err = testRedisClient.GetValue(ctx, "test:invalid:json", &result)
 	assert.Error(t, err)
 
 	// Clean up
-	client.Del(ctx, "test:invalid:json")
+	testRedisClient.Del(ctx, "test:invalid:json")
 }
 
 func TestRedisClient_SetGetValue_Bytes(t *testing.T) {
 	ctx := context.Background()
-	client := setupTestClient(t)
 
 	tests := []struct {
 		name    string
@@ -626,7 +623,7 @@ func TestRedisClient_SetGetValue_Bytes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test SetValue
-			err := client.SetValue(ctx, tt.key, tt.value, time.Minute)
+			err := testRedisClient.SetValue(ctx, tt.key, tt.value, time.Minute)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("SetValue() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -634,7 +631,7 @@ func TestRedisClient_SetGetValue_Bytes(t *testing.T) {
 
 			// Test GetValue
 			var got []byte
-			err = client.GetValue(ctx, tt.key, &got)
+			err = testRedisClient.GetValue(ctx, tt.key, &got)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetValue() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -649,21 +646,20 @@ func TestRedisClient_SetGetValue_Bytes(t *testing.T) {
 
 func TestRedisClient_SetGetValue_Mixed(t *testing.T) {
 	ctx := context.Background()
-	client := setupTestClient(t)
 
 	t.Run("set string get bytes", func(t *testing.T) {
 		key := "test_str_bytes"
 		value := "Hello, World!"
 
 		// Set as string
-		err := client.SetValue(ctx, key, value, time.Minute)
+		err := testRedisClient.SetValue(ctx, key, value, time.Minute)
 		if err != nil {
 			t.Fatalf("SetValue() error = %v", err)
 		}
 
 		// Get as bytes
 		var got []byte
-		err = client.GetValue(ctx, key, &got)
+		err = testRedisClient.GetValue(ctx, key, &got)
 		if err != nil {
 			t.Fatalf("GetValue() error = %v", err)
 		}
@@ -678,14 +674,14 @@ func TestRedisClient_SetGetValue_Mixed(t *testing.T) {
 		value := []byte("Hello, World!")
 
 		// Set as bytes
-		err := client.SetValue(ctx, key, value, time.Minute)
+		err := testRedisClient.SetValue(ctx, key, value, time.Minute)
 		if err != nil {
 			t.Fatalf("SetValue() error = %v", err)
 		}
 
 		// Get as string
 		var got string
-		err = client.GetValue(ctx, key, &got)
+		err = testRedisClient.GetValue(ctx, key, &got)
 		if err != nil {
 			t.Fatalf("GetValue() error = %v", err)
 		}
@@ -696,60 +692,46 @@ func TestRedisClient_SetGetValue_Mixed(t *testing.T) {
 	})
 }
 
-func setupTestClient(t *testing.T) *RedisClient {
-	// Use Redis configuration for testing environment
-	client := NewRedisClientWithAddr("localhost:6379", 0)
-
-	// Ensure Redis connection is working
-	ctx := context.Background()
-	if err := client.Ping(ctx).Err(); err != nil {
-		t.Fatalf("Failed to connect to Redis: %v", err)
-	}
-
-	return client
-}
-
 func TestRedisClient_ListOperations(t *testing.T) {
-	client := setupTestClient(t)
 	ctx := context.Background()
 
 	t.Run("basic list operations", func(t *testing.T) {
 		key := "test:list:basic"
 		// Clean up test key
-		client.Del(ctx, key)
+		testRedisClient.Del(ctx, key)
 
 		// Test LPush
-		err := client.LPushValue(ctx, key, "value1", "value2", "value3")
+		err := testRedisClient.LPushValue(ctx, key, "value1", "value2", "value3")
 		assert.NoError(t, err)
 
 		// Test RPush
-		err = client.RPushValue(ctx, key, "value4", "value5")
+		err = testRedisClient.RPushValue(ctx, key, "value4", "value5")
 		assert.NoError(t, err)
 
 		// Verify list length
-		length, err := client.LLen(ctx, key).Result()
+		length, err := testRedisClient.LLen(ctx, key).Result()
 		assert.NoError(t, err)
 		assert.Equal(t, int64(5), length)
 
 		// Test LPop
 		var leftValue string
-		err = client.LPopValue(ctx, key, &leftValue)
+		err = testRedisClient.LPopValue(ctx, key, &leftValue)
 		assert.NoError(t, err)
 		assert.Equal(t, "value3", leftValue)
 
 		// Test RPop
 		var rightValue string
-		err = client.RPopValue(ctx, key, &rightValue)
+		err = testRedisClient.RPopValue(ctx, key, &rightValue)
 		assert.NoError(t, err)
 		assert.Equal(t, "value5", rightValue)
 
 		// Clean up
-		client.Del(ctx, key)
+		testRedisClient.Del(ctx, key)
 	})
 
 	t.Run("complex type list operations", func(t *testing.T) {
 		key := "test:list:complex"
-		client.Del(ctx, key)
+		testRedisClient.Del(ctx, key)
 
 		items := []ListTestItem{
 			{ID: 1, Name: "Item 1", Tags: []string{"tag1", "tag2"}},
@@ -759,50 +741,50 @@ func TestRedisClient_ListOperations(t *testing.T) {
 
 		// Test LPush with complex type
 		for _, item := range items {
-			err := client.LPushValue(ctx, key, item)
+			err := testRedisClient.LPushValue(ctx, key, item)
 			assert.NoError(t, err)
 		}
 
 		// Test LPop with complex type
 		var result ListTestItem
-		err := client.LPopValue(ctx, key, &result)
+		err := testRedisClient.LPopValue(ctx, key, &result)
 		assert.NoError(t, err)
 		assert.Equal(t, items[len(items)-1], result)
 
 		// Clean up
-		client.Del(ctx, key)
+		testRedisClient.Del(ctx, key)
 	})
 
 	t.Run("range operations", func(t *testing.T) {
 		key := "test:list:range"
-		client.Del(ctx, key)
+		testRedisClient.Del(ctx, key)
 
 		// Prepare test data
 		values := []string{"value1", "value2", "value3", "value4", "value5"}
 		for _, v := range values {
-			err := client.RPushValue(ctx, key, v)
+			err := testRedisClient.RPushValue(ctx, key, v)
 			assert.NoError(t, err)
 		}
 
 		// Test Range
 		var rangeResult []string
-		err := client.RangeValue(ctx, key, 1, 3, &rangeResult)
+		err := testRedisClient.RangeValue(ctx, key, 1, 3, &rangeResult)
 		assert.NoError(t, err)
 		assert.Equal(t, []string{"value2", "value3", "value4"}, rangeResult)
 
 		// Test RRange
 		var rrangeResult []string
-		err = client.RRangeValue(ctx, key, 0, 2, &rrangeResult)
+		err = testRedisClient.RRangeValue(ctx, key, 0, 2, &rrangeResult)
 		assert.NoError(t, err)
 		assert.Equal(t, []string{"value3", "value4", "value5"}, rrangeResult)
 
 		// Clean up
-		client.Del(ctx, key)
+		testRedisClient.Del(ctx, key)
 	})
 
 	t.Run("mixed type list operations", func(t *testing.T) {
 		key := "test:list:mixed"
-		client.Del(ctx, key)
+		testRedisClient.Del(ctx, key)
 
 		// Create test UserProfile
 		userProfile := UserProfile{
@@ -812,7 +794,7 @@ func TestRedisClient_ListOperations(t *testing.T) {
 			Age:      25,
 			IsActive: true,
 			Roles:    []string{"admin", "user"},
-			Preferences: map[string]interface{}{
+			Preferences: map[string]any{
 				"theme":         "dark",
 				"language":      "en",
 				"notifications": true,
@@ -822,7 +804,7 @@ func TestRedisClient_ListOperations(t *testing.T) {
 
 		// Note: Since it's LIFO, we need to push in reverse order of desired pop order
 		// Test different types of values
-		err := client.RPushValue(ctx, key, // Use RPush to maintain order
+		err := testRedisClient.RPushValue(ctx, key, // Use RPush to maintain order
 			42,                     // int
 			3.14,                   // float64
 			true,                   // bool
@@ -838,180 +820,164 @@ func TestRedisClient_ListOperations(t *testing.T) {
 
 		// Test int
 		var intValue int
-		err = client.LPopValue(ctx, key, &intValue)
+		err = testRedisClient.LPopValue(ctx, key, &intValue)
 		assert.NoError(t, err)
 		assert.Equal(t, 42, intValue)
 
 		// Test float64
 		var floatValue float64
-		err = client.LPopValue(ctx, key, &floatValue)
+		err = testRedisClient.LPopValue(ctx, key, &floatValue)
 		assert.NoError(t, err)
 		assert.Equal(t, 3.14, floatValue)
 
 		// Test bool
 		var boolValue bool
-		err = client.LPopValue(ctx, key, &boolValue)
+		err = testRedisClient.LPopValue(ctx, key, &boolValue)
 		assert.NoError(t, err)
 		assert.Equal(t, true, boolValue)
 
 		// Test string
 		var strValue string
-		err = client.LPopValue(ctx, key, &strValue)
+		err = testRedisClient.LPopValue(ctx, key, &strValue)
 		assert.NoError(t, err)
 		assert.Equal(t, "string value", strValue)
 
 		// Test map
 		var mapValue map[string]int
-		err = client.LPopValue(ctx, key, &mapValue)
+		err = testRedisClient.LPopValue(ctx, key, &mapValue)
 		assert.NoError(t, err)
 		assert.Equal(t, map[string]int{"a": 1}, mapValue)
 
 		// Test UserProfile struct
 		var profileResult UserProfile
-		err = client.LPopValue(ctx, key, &profileResult)
+		err = testRedisClient.LPopValue(ctx, key, &profileResult)
 		assert.NoError(t, err)
 		assert.Equal(t, userProfile, profileResult)
 
 		// Test []byte
 		var bytesValue []byte
-		err = client.LPopValue(ctx, key, &bytesValue)
+		err = testRedisClient.LPopValue(ctx, key, &bytesValue)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte("byte array"), bytesValue)
 
 		// Verify list is empty
-		length, err := client.LLen(ctx, key).Result()
+		length, err := testRedisClient.LLen(ctx, key).Result()
 		assert.NoError(t, err)
 		assert.Equal(t, int64(0), length)
 
 		// Clean up
-		client.Del(ctx, key)
+		testRedisClient.Del(ctx, key)
 	})
 
 	t.Run("error cases", func(t *testing.T) {
 		key := "test:list:errors"
-		client.Del(ctx, key)
+		testRedisClient.Del(ctx, key)
 
 		// Test popping from empty list
 		var result string
-		err := client.LPopValue(ctx, key, &result)
+		err := testRedisClient.LPopValue(ctx, key, &result)
 		assert.Error(t, err)
 		assert.Equal(t, redis.Nil, err)
 
 		// Test Range parameter validation
 		var invalidPtr *string
-		err = client.RangeValue(ctx, key, 0, 1, invalidPtr)
+		err = testRedisClient.RangeValue(ctx, key, 0, 1, invalidPtr)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "result must be a slice")
 
 		// Test type conversion error
-		err = client.LPushValue(ctx, key, "not a number")
+		err = testRedisClient.LPushValue(ctx, key, "not a number")
 		assert.NoError(t, err)
 
 		var intResult int
-		err = client.LPopValue(ctx, key, &intResult)
+		err = testRedisClient.LPopValue(ctx, key, &intResult)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), `strconv.Atoi: parsing "not a number": invalid syntax`)
 
 		// Clean up
-		client.Del(ctx, key)
+		testRedisClient.Del(ctx, key)
 	})
 }
 
 func cleanupTest(t *testing.T, client *RedisClient, keys ...string) {
 	ctx := context.Background()
 	for _, key := range keys {
-		err := client.Del(ctx, key).Err()
+		err := testRedisClient.Del(ctx, key).Err()
 		assert.NoError(t, err)
 	}
 }
 
 func TestRedisClient_RPushRPop(t *testing.T) {
-	client := setupTestClient(t)
 	ctx := context.Background()
 	key := "test:rpush:rpop"
-	defer cleanupTest(t, client, key)
+	defer cleanupTest(t, testRedisClient, key)
 
 	// Test basic types
 	t.Run("basic types", func(t *testing.T) {
 		// Push multiple values
-		err := client.RPushValue(ctx, key, "value1", 42, true)
+		err := testRedisClient.RPushValue(ctx, key, "value1", 42, true)
 		assert.NoError(t, err)
 
 		// Pop and verify
 		var strVal string
-		err = client.RPopValue(ctx, key, &strVal)
+		err = testRedisClient.RPopValue(ctx, key, &strVal)
 		assert.NoError(t, err)
 		assert.Equal(t, "1", strVal)
 
 		var intVal int
-		err = client.RPopValue(ctx, key, &intVal)
+		err = testRedisClient.RPopValue(ctx, key, &intVal)
 		assert.NoError(t, err)
 		assert.Equal(t, 42, intVal)
 
 		var lastStr string
-		err = client.RPopValue(ctx, key, &lastStr)
+		err = testRedisClient.RPopValue(ctx, key, &lastStr)
 		assert.NoError(t, err)
 		assert.Equal(t, "value1", lastStr)
 	})
 }
 
 func TestRedisClient_RRangeValue(t *testing.T) {
-	client := setupTestClient(t)
 	ctx := context.Background()
 	key := "test:rrange"
-	defer cleanupTest(t, client, key)
+	defer cleanupTest(t, testRedisClient, key)
 
 	// Prepare test data
 	values := []string{"v1", "v2", "v3", "v4", "v5"}
 	for _, v := range values {
-		err := client.RPushValue(ctx, key, v)
+		err := testRedisClient.RPushValue(ctx, key, v)
 		assert.NoError(t, err)
 	}
 
 	t.Run("basic rrange", func(t *testing.T) {
 		var result []string
-		err := client.RRangeValue(ctx, key, 0, 2, &result)
+		err := testRedisClient.RRangeValue(ctx, key, 0, 2, &result)
 		assert.NoError(t, err)
 		assert.Equal(t, []string{"v3", "v4", "v5"}, result)
 	})
 
 	t.Run("rrange with invalid indices", func(t *testing.T) {
 		// Passing nil pointer should return error
-		err := client.RRangeValue(ctx, key, 0, 1, nil)
+		err := testRedisClient.RRangeValue(ctx, key, 0, 1, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "result must not be nil")
 	})
 }
 
 func TestRedisClient_ErrorHandling(t *testing.T) {
-	client := setupTestClient(t)
 	ctx := context.Background()
 
 	t.Run("invalid value conversion", func(t *testing.T) {
 		// Test unconvertible type
 		ch := make(chan int)
-		err := client.SetValue(ctx, "test:invalid", ch, time.Minute)
+		err := testRedisClient.SetValue(ctx, "test:invalid", ch, time.Minute)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "json marshal failed")
 	})
 
 	t.Run("invalid pointer types", func(t *testing.T) {
 		var invalidPtr *int
-		err := client.GetValue(ctx, "test:key", invalidPtr)
+		err := testRedisClient.GetValue(ctx, "test:key", invalidPtr)
 		assert.Error(t, err)
 		assert.Equal(t, redis.Nil, err)
 	})
-}
-
-func TestRedisClient_GetInstanceID(t *testing.T) {
-	client := setupTestClient(t)
-
-	id1 := client.getInstanceID()
-	id2 := client.getInstanceID()
-
-	// Verify same instance returns same ID
-	assert.Equal(t, id1, id2)
-
-	// Verify ID format matches expected pattern (hostname:pid)
-	assert.Regexp(t, `^[\w\-\.]+:\d+$`, id1)
 }

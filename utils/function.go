@@ -103,12 +103,7 @@ func Partition[T any](arr []T, predicate func(T) bool) ([]T, []T) {
 }
 
 func Contains[T comparable](arr []T, tar T) bool {
-	for _, a := range arr {
-		if a == tar {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(arr, tar)
 }
 
 func MapIter[inputs ~[]E, E any, U any](arr inputs, fn func(E) U) iter.Seq[U] {

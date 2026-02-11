@@ -1,6 +1,6 @@
 module github.com/miebyte/goutils
 
-go 1.25.4
+go 1.26.0
 
 require (
 	github.com/Masterminds/semver v1.5.0
@@ -23,6 +23,7 @@ require (
 	github.com/spf13/cast v1.7.1
 	github.com/spf13/pflag v1.0.6
 	github.com/stretchr/testify v1.10.0
+	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/exp v0.0.0-20250718183923-645b1fa84792
 	golang.org/x/sync v0.16.0
 	gopkg.in/mgo.v2 v2.0.0-20190816093944-a6b53ec6cb22
@@ -78,6 +79,7 @@ require (
 	github.com/segmentio/go-snakecase v1.2.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.12 // indirect
+	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	golang.org/x/arch v0.14.0 // indirect
 	golang.org/x/crypto v0.38.0 // indirect
 	golang.org/x/net v0.40.0 // indirect

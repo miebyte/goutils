@@ -1,59 +1,59 @@
 package ptrx
 
 func String(a string) *string {
-	return &a
+	return new(a)
 }
 
 func Int(a int) *int {
-	return &a
+	return new(a)
 }
 
 func Int8(a int8) *int8 {
-	return &a
+	return new(a)
 }
 
 func Int16(a int16) *int16 {
-	return &a
+	return new(a)
 }
 
 func Int32(a int32) *int32 {
-	return &a
+	return new(a)
 }
 
 func Int64(a int64) *int64 {
-	return &a
+	return new(a)
 }
 
 func Bool(a bool) *bool {
-	return &a
+	return new(a)
 }
 
 func Uint(a uint) *uint {
-	return &a
+	return new(a)
 }
 
 func Uint8(a uint8) *uint8 {
-	return &a
+	return new(a)
 }
 
 func Uint16(a uint16) *uint16 {
-	return &a
+	return new(a)
 }
 
 func Uint32(a uint32) *uint32 {
-	return &a
+	return new(a)
 }
 
 func Uint64(a uint64) *uint64 {
-	return &a
+	return new(a)
 }
 
 func Float32(a float32) *float32 {
-	return &a
+	return new(a)
 }
 
 func Float64(a float64) *float64 {
-	return &a
+	return new(a)
 }
 
 func IntSlice(a []int) []*int {

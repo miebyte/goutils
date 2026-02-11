@@ -104,7 +104,7 @@ func newConsulClient(address string) *Client {
 }
 
 func (c *Client) findInConsul(serviceName string, tag string) ([]*api.ServiceEntry, error) {
-	ret, err, _ := c.sg.Do(fmt.Sprintf("%s:%s", serviceName, tag), func() (interface{}, error) {
+	ret, err, _ := c.sg.Do(fmt.Sprintf("%s:%s", serviceName, tag), func() (any, error) {
 		cs, _, err := c.Health().Service(serviceName, tag, true, nil)
 		return cs, err
 	})

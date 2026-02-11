@@ -26,7 +26,7 @@ func GetStructName(i any) string {
 	return tPtr.Name()
 }
 
-func GetFuncName(i interface{}) string {
+func GetFuncName(i any) string {
 	return runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
 }
 
@@ -64,7 +64,7 @@ func Jsonify(v any) string {
 	return string(d)
 }
 
-func JsonifyNoIndent(v interface{}) string {
+func JsonifyNoIndent(v any) string {
 	d, err := json.Marshal(v)
 	PanicError(err)
 	return string(d)

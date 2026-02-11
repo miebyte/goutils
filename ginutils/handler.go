@@ -22,7 +22,7 @@ import (
 type requestHandler[Q any] func(c *gin.Context, req *Q)
 
 func RequestHandler[Q any](fn requestHandler[Q]) gin.HandlerFunc {
-	reqType := reflect.TypeOf((*Q)(nil)).Elem()
+	reqType := reflect.TypeFor[Q]()
 	reqKind := reflectx.ResolveBaseKind(reqType)
 	reqStrategies := resolveStrategies(reqType)
 
@@ -56,7 +56,7 @@ func RequestHandler[Q any](fn requestHandler[Q]) gin.HandlerFunc {
 type requestResponseHandler[Q any, P any] func(c *gin.Context, req *Q) (resp *P, err error)
 
 func RequestResponseHandler[Q any, P any](fn requestResponseHandler[Q, P]) gin.HandlerFunc {
-	reqType := reflect.TypeOf((*Q)(nil)).Elem()
+	reqType := reflect.TypeFor[Q]()
 	reqKind := reflectx.ResolveBaseKind(reqType)
 	reqStrategies := resolveStrategies(reqType)
 
@@ -107,8 +107,7 @@ func handleError(c *gin.Context, err error) {
 
 func prepareMount[T any]() error {
 	// r is a pointer of ModelHandler like *ModelHandler
-	r := new(T)
-	to := reflect.TypeOf(r)
+	to := reflect.TypeFor[T]()
 
 	// if depth == 1, it means MountHandler[MountTestHandler]()
 	// if depth == 2, it means MountHandler[*MountTestHandler]()

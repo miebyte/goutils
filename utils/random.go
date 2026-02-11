@@ -13,7 +13,6 @@ import (
 	"io"
 	"math"
 	"math/rand"
-	"time"
 	"unsafe"
 
 	"golang.org/x/exp/constraints"
@@ -29,15 +28,9 @@ const (
 	AllChars        = Numeral + LowwerLetters + UpperLetters + SymbolChars
 )
 
-var rn *rand.Rand
-
-func init() {
-	rn = rand.New(rand.NewSource(int64(time.Now().UnixNano())))
-}
-
 // RandBool generates a random boolean value (true or false).
 func RandBool() bool {
-	return rn.Intn(2) == 1
+	return rand.Intn(2) == 1
 }
 
 // RandBoolSlice generates a random boolean slice of specified length.
@@ -65,10 +58,27 @@ func RandInt(min, max int) int {
 	}
 
 	if min == 0 && max == math.MaxInt {
-		return rn.Int()
+		return rand.Int()
 	}
 
-	return rn.Intn(max-min) + min
+	return rand.Intn(max-min) + min
+}
+
+// RandInt64 generate random int64 between [min, max).
+func RandInt64(min, max int64) int64 {
+	if min == max {
+		return min
+	}
+
+	if max < min {
+		min, max = max, min
+	}
+
+	if min == 0 && max == math.MaxInt64 {
+		return rand.Int63()
+	}
+
+	return rand.Int63n(max-min) + min
 }
 
 // RandIntSlice generates a slice of random integers.
@@ -127,7 +137,7 @@ func RandFloat(min, max float64, precision int) float64 {
 		min, max = max, min
 	}
 
-	n := rn.Float64()*(max-min) + min
+	n := rand.Float64()*(max-min) + min
 
 	return RoundToFloat(n, precision)
 }
@@ -195,7 +205,7 @@ func RandFromGivenSlice[T any](slice []T) T {
 		var zero T
 		return zero
 	}
-	return slice[rn.Intn(len(slice))]
+	return slice[rand.Intn(len(slice))]
 }
 
 // RandSliceFromGivenSlice generate a random slice of length num from given slice.
@@ -212,12 +222,12 @@ func RandSliceFromGivenSlice[T any](slice []T, num int, repeatable bool) []T {
 	result := make([]T, num)
 	if repeatable {
 		for i := range result {
-			result[i] = slice[rn.Intn(len(slice))]
+			result[i] = slice[rand.Intn(len(slice))]
 		}
 	} else {
 		shuffled := make([]T, len(slice))
 		copy(shuffled, slice)
-		rn.Shuffle(len(shuffled), func(i, j int) {
+		rand.Shuffle(len(shuffled), func(i, j int) {
 			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 		})
 		result = shuffled[:num]
@@ -274,7 +284,7 @@ func random(s string, length int) string {
 	if strLength <= 0 {
 		return ""
 	} else if strLength == 1 {
-		for i := 0; i < length; i++ {
+		for i := range length {
 			bytes[i] = s[0]
 		}
 		return *(*string)(unsafe.Pointer(&bytes))
@@ -284,10 +294,10 @@ func random(s string, length int) string {
 	var letterIdMask int64 = 1<<letterIdBits - 1
 
 	letterIdMax := 63 / letterIdBits
-	for i, cache, remain := length-1, rn.Int63(), letterIdMax; i >= 0; {
+	for i, cache, remain := length-1, rand.Int63(), letterIdMax; i >= 0; {
 		// check if the random number generator has exhausted all random numbers
 		if remain == 0 {
-			cache, remain = rn.Int63(), letterIdMax
+			cache, remain = rand.Int63(), letterIdMax
 		}
 
 		// if s is not an integer multiple of 2, idx may exceed the length of s

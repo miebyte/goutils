@@ -110,8 +110,7 @@ func resolveStrategies(t reflect.Type) []bindStrategy {
 			return
 		}
 
-		for i := range t.NumField() {
-			field := t.Field(i)
+		for field := range t.Fields() {
 			if field.Anonymous {
 				traverse(field.Type)
 				continue

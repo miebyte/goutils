@@ -1,5 +1,14 @@
 package ptrx
 
+func TypesValue[T any](a *T) T {
+	var zeroT T
+	if a == nil {
+		return zeroT
+	}
+
+	return *a
+}
+
 func StringValue(a *string) string {
 	if a == nil {
 		return ""

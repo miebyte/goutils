@@ -54,9 +54,9 @@ func WithPrefix(prefix string) GormLoggerOption {
 	}
 }
 
-func WithIgnoreRecordNotFound() GormLoggerOption {
+func WithNotIgnoreRecordNotFound() GormLoggerOption {
 	return func(g *gormLogger) {
-		g.ignoreRecordNotFoundError = true
+		g.ignoreRecordNotFoundError = false
 	}
 }
 
@@ -80,10 +80,11 @@ func NewGormLogger(opts ...GormLoggerOption) *gormLogger {
 	)
 
 	l := &gormLogger{
-		logger:       logger,
-		traceStr:     traceStr,
-		traceWarnStr: traceWarnStr,
-		traceErrStr:  traceErrStr,
+		logger:                    logger,
+		traceStr:                  traceStr,
+		traceWarnStr:              traceWarnStr,
+		traceErrStr:               traceErrStr,
+		ignoreRecordNotFoundError: true,
 	}
 
 	for _, opt := range opts {

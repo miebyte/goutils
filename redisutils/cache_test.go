@@ -21,7 +21,7 @@ func TestCacheContext_DoFunc_CacheHit(t *testing.T) {
 		return fmt.Sprintf("val:%d", id), nil
 	}
 
-	cc := CacheCall(ctx, fn).
+	cc := CacheCall(fn).
 		WithClient(testRedisClient).
 		SetPrefix("test:cache:do").
 		SetTTL(time.Minute).
@@ -56,7 +56,7 @@ func TestCacheContext_OnceFunc_Singleflight(t *testing.T) {
 		return id * 2, nil
 	}
 
-	cc := CacheCall(ctx, fn).
+	cc := CacheCall(fn).
 		WithClient(testRedisClient).
 		SetPrefix("test:cache:once").
 		SetTTL(time.Minute).
@@ -102,7 +102,7 @@ func TestCacheContext_DoFunc_NoCacheOnError(t *testing.T) {
 		return "", errors.New("boom")
 	}
 
-	cc := CacheCall(ctx, fn).
+	cc := CacheCall(fn).
 		WithClient(testRedisClient).
 		SetPrefix("test:cache:error").
 		SetTTL(time.Minute).
@@ -172,7 +172,7 @@ func TestCacheContext_Func_MultiReturnTypes(t *testing.T) {
 		}, nil
 	}
 
-	cc := CacheCall(ctx, fn).
+	cc := CacheCall(fn).
 		WithClient(testRedisClient).
 		SetPrefix("test:cache:multi").
 		SetTTL(time.Minute).
@@ -216,7 +216,7 @@ func TestCacheContext_Func_BytesAndSliceReturn(t *testing.T) {
 		return result{Payload: outPayload, Items: outItems}, nil
 	}
 
-	cc := CacheCall(ctx, fn).
+	cc := CacheCall(fn).
 		WithClient(testRedisClient).
 		SetPrefix("test:cache:bytes").
 		SetTTL(time.Minute).
@@ -286,7 +286,7 @@ func TestCacheContext_Func_StructArgsAndReturn(t *testing.T) {
 		}, nil
 	}
 
-	cc := CacheCall(ctx, fn).
+	cc := CacheCall(fn).
 		WithClient(testRedisClient).
 		SetPrefix("test:cache:struct").
 		SetTTL(time.Minute).
@@ -365,7 +365,7 @@ func TestCacheContext_Func_StructSliceArgs(t *testing.T) {
 		return Summary{TotalCount: totalCount, TotalPrice: totalPrice, Keys: keys}, nil
 	}
 
-	cc := CacheCall(ctx, fn).
+	cc := CacheCall(fn).
 		WithClient(testRedisClient).
 		SetPrefix("test:cache:struct-slice").
 		SetTTL(time.Minute).

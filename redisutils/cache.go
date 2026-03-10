@@ -190,9 +190,7 @@ func (cc *CacheContext[Req, Ret]) shouldCache() bool {
 
 func (cc *CacheContext[Req, Ret]) loadFromCache(ctx context.Context, key string) (Ret, bool) {
 	var zero Ret
-	if !cc.shouldCache() {
-		return zero, false
-	}
+
 	data, err := cc.client.Get(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return zero, false
@@ -214,9 +212,6 @@ func (cc *CacheContext[Req, Ret]) loadFromCache(ctx context.Context, key string)
 }
 
 func (cc *CacheContext[Req, Ret]) saveToCache(ctx context.Context, key string, out Ret) error {
-	if !cc.shouldCache() {
-		return nil
-	}
 	data, err := cc.serializer.Serialize(out)
 	if err != nil {
 		return fmt.Errorf("cache encode failed: err=%w", err)
@@ -244,7 +239,7 @@ func (cc *CacheContext[Req, Ret]) makeCachedFunc(ctx context.Context, req Req, o
 	ctx = cc.getContext(ctx)
 
 	if !cc.shouldCache() {
-		logging.Warnf("%s not cache", cc.fnName)
+		logging.Warnf("%s not cache. maybe redisClient or ttl is empty", cc.fnName)
 		return cc.callFn(ctx, req)
 	}
 
@@ -324,13 +319,9 @@ func (cc *CacheContext[Req, Ret]) OnceFunc() AnyFn[Req, Ret] {
 // - SetArgsKeyFunc(argsKeyFunc ArgsKeyFunc[Req]) *CacheContext[Req, Ret]
 // - SetSerializer(serializer Serializer) *CacheContext[Req, Ret]
 // - Func() AnyFn[Req, Ret]
-func CacheCall[Req, Ret any](ctx context.Context, fn AnyFn[Req, Ret]) *CacheContext[Req, Ret] {
-	if ctx == nil {
-		ctx = context.TODO()
-	}
-
+func CacheCall[Req, Ret any](fn AnyFn[Req, Ret]) *CacheContext[Req, Ret] {
 	cc := &CacheContext[Req, Ret]{
-		ctx:        ctx,
+		ctx:        context.TODO(),
 		fn:         fn,
 		ttl:        5 * time.Minute,
 		ttlJitter:  1 * time.Minute,

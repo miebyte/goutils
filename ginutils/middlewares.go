@@ -107,11 +107,11 @@ func LoggerMiddleware(loggers ...logging.Logger) gin.HandlerFunc {
 		}
 
 		args := []any{
+			method,
 			path,
 			statusCode,
 			spendTime,
 			clientIp,
-			method,
 		}
 
 		requestId, exists := c.Get("RequestID")
@@ -126,7 +126,7 @@ func LoggerMiddleware(loggers ...logging.Logger) gin.HandlerFunc {
 }
 
 var (
-	logMsg = "Handle Path: %s StatusCode=%v Elapse=%v Host=%s Method=%s"
+	logMsg = "Method=%s Path=%s StatusCode=%v Elapse=%v Host=%s"
 )
 
 func customRecoveryFn(c *gin.Context, err any) {

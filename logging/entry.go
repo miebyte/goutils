@@ -24,32 +24,34 @@ var (
 const (
 	maximumCallerDepth int = 25
 	defaultFrames      int = 4
-	sourceContextKey       = "go-utils:source:key"
+	sourceContextKey       = "goutils:source:key"
 )
 
-type Fields map[string]any
+type CtxFields map[string]any
 
-func (f Fields) Clone() Fields {
-	nf := make(Fields)
+func (f CtxFields) Clone() CtxFields {
+	nf := make(CtxFields)
 	maps.Copy(nf, f)
 	return nf
 }
 
 type Entry struct {
-	Ctx     context.Context
-	Logger  *PrettyLogger
-	Message string
-	Data    Fields
-	Time    time.Time
-	Level   level.Level
-	Source  string
-	Buffer  *bytes.Buffer
+	Ctx            context.Context
+	Logger         *PrettyLogger
+	Message        string
+	Data           CtxFields
+	Fields         []Field
+	Time           time.Time
+	Level          level.Level
+	Source         string
+	Buffer         *bytes.Buffer
+	WithoutMasking bool
 }
 
 func NewEntry(logger *PrettyLogger) *Entry {
 	return &Entry{
 		Logger: logger,
-		Data:   make(Fields, 6),
+		Data:   make(CtxFields, 6),
 	}
 }
 
@@ -189,7 +191,7 @@ func WithSpecifySource(ctx context.Context, source string) context.Context {
 	return context.WithValue(ctx, sourceContextKey, source)
 }
 
-func (entry *Entry) FieldsKVPairs() []any {
+func (entry *Entry) CtxFieldsKVPairs() []any {
 	kvPairs := make([]any, len(entry.Data)*2)
 	for k, v := range maps.All(entry.Data) {
 		kvPairs = append(kvPairs, k, v)

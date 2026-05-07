@@ -23,7 +23,6 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/miebyte/goutils/logging/level"
-	"github.com/miebyte/goutils/masking"
 )
 
 type Formatter interface {
@@ -118,7 +117,7 @@ func (f *TextFormatter) formatStandard(buf *bytes.Buffer, e *Entry) {
 		buf.WriteString(" | ")
 	}
 
-	// FIELDS
+	// CtxFields
 	if len(e.Data) > 0 {
 		keys := make([]string, 0, len(e.Data))
 		for k := range e.Data {
@@ -136,8 +135,22 @@ func (f *TextFormatter) formatStandard(buf *bytes.Buffer, e *Entry) {
 
 	// MESSAGE
 	e.Message = strings.TrimSuffix(e.Message, "\n")
-	e.Message = masking.MaskMessage(e.Message)
 	buf.WriteString(e.Message)
+
+	f.addFields(buf, e.Fields)
+}
+
+// addFields 将结构化字段追加到日志输出中。
+func (f *TextFormatter) addFields(buf *bytes.Buffer, fields []Field) {
+	if len(fields) == 0 {
+		return
+	}
+
+	buf.WriteString(" ")
+
+	for _, field := range fields {
+		field.AddTo(buf)
+	}
 }
 
 func (f *TextFormatter) formatCompact(buf *bytes.Buffer, e *Entry) {
@@ -182,8 +195,9 @@ func (f *TextFormatter) formatCompact(buf *bytes.Buffer, e *Entry) {
 
 	// MESSAGE
 	e.Message = strings.TrimSuffix(e.Message, "\n")
-	e.Message = masking.MaskMessage(e.Message)
 	buf.WriteString(e.Message)
+
+	f.addFields(buf, e.Fields)
 }
 
 func (f *TextFormatter) formatLevel(l level.Level) string {

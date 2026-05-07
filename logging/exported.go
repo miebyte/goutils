@@ -101,6 +101,26 @@ func Fatalc(ctx context.Context, msg string, v ...any) {
 	logger.Fatalc(ctx, msg, v...)
 }
 
+func Infow(ctx context.Context, msg string, v ...Field) {
+	logger.Infow(ctx, msg, v...)
+}
+
+func Debugw(ctx context.Context, msg string, v ...Field) {
+	logger.Debugw(ctx, msg, v...)
+}
+
+func Warnw(ctx context.Context, msg string, v ...Field) {
+	logger.Warnw(ctx, msg, v...)
+}
+
+func Errorw(ctx context.Context, msg string, v ...Field) {
+	logger.Errorw(ctx, msg, v...)
+}
+
+func Fatalw(ctx context.Context, msg string, v ...Field) {
+	logger.Fatalw(ctx, msg, v...)
+}
+
 func PanicError(err error, v ...any) {
 	if err == nil {
 		return

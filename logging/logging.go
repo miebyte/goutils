@@ -40,6 +40,14 @@ type ContextLogger interface {
 	Fatalc(context.Context, string, ...any)
 }
 
+type FieldLogger interface {
+	Infow(context.Context, string, ...Field)
+	Debugw(context.Context, string, ...Field)
+	Warnw(context.Context, string, ...Field)
+	Errorw(context.Context, string, ...Field)
+	Fatalw(context.Context, string, ...Field)
+}
+
 type Logger interface {
 	baseLogger
 	MessageLogger

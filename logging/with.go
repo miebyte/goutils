@@ -10,19 +10,20 @@ const (
 	LoggingGroupKey = "logging:group:key"
 )
 
-func GetContextFields(c context.Context) Fields {
+func GetContextFields(c context.Context) CtxFields {
 	val := c.Value(FieldContextKey)
-	field, ok := val.(Fields)
+	field, ok := val.(CtxFields)
 	if !ok {
-		return make(Fields)
+		return make(CtxFields)
 	}
 
 	return field.Clone()
 }
 
-func CloneContext(c context.Context) context.Context {
-	f := GetContextFields(c)
-	return context.WithValue(context.TODO(), FieldContextKey, f)
+func CloneContextFields(c context.Context) context.Context {
+	fields := GetContextFields(c)
+
+	return context.WithValue(context.TODO(), FieldContextKey, fields)
 }
 
 func With(c context.Context, key string, values ...any) context.Context {
@@ -46,7 +47,7 @@ func With(c context.Context, key string, values ...any) context.Context {
 	return context.WithValue(c, FieldContextKey, newF)
 }
 
-func appendGroupKey(fields Fields, group string) {
+func appendGroupKey(fields CtxFields, group string) {
 	var groupList []string
 	value, exists := fields[LoggingGroupKey]
 	if !exists {
@@ -59,7 +60,7 @@ func appendGroupKey(fields Fields, group string) {
 	fields[LoggingGroupKey] = groupList
 }
 
-func GetGroupKey(fields Fields) []string {
+func GetGroupKey(fields CtxFields) []string {
 	if fields == nil {
 		return nil
 	}

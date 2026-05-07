@@ -8,10 +8,14 @@
 
 package main
 
-import "github.com/miebyte/goutils/logging"
+import (
+	"context"
+
+	"github.com/miebyte/goutils/logging"
+)
 
 func main() {
 
 	logging.Infof("this is info")
-
+	logging.Infow(context.Background(), "this is info", logging.Int64("key", 1))
 }

@@ -145,6 +145,16 @@ func (l *PrettyLogger) logc(ctx context.Context, lev level.Level, msg string, ar
 	}
 }
 
+func (l *PrettyLogger) logw(ctx context.Context, lev level.Level, msg string, args ...Field) {
+	if l.IsLevelEnabled(lev) {
+		entry := l.newEntry()
+		entry.Ctx = ctx
+		entry.Fields = append(entry.Fields[:0], args...)
+		entry.Log(lev, msg)
+		l.releaseEntry(entry)
+	}
+}
+
 func (l *PrettyLogger) Info(msg string) {
 	l.log(level.LevelInfo, msg)
 }
@@ -200,6 +210,32 @@ func (l *PrettyLogger) Errorf(msg string, args ...any) {
 
 func (l *PrettyLogger) Fatalf(msg string, args ...any) {
 	l.logf(level.LevelError, msg, args...)
+	os.Exit(1)
+}
+
+// Infow 输出带上下文与结构化字段的 info 日志。
+func (l *PrettyLogger) Infow(ctx context.Context, msg string, args ...Field) {
+	l.logw(ctx, level.LevelInfo, msg, args...)
+}
+
+// Debugw 输出带上下文与结构化字段的 debug 日志。
+func (l *PrettyLogger) Debugw(ctx context.Context, msg string, args ...Field) {
+	l.logw(ctx, level.LevelDebug, msg, args...)
+}
+
+// Warnw 输出带上下文与结构化字段的 warn 日志。
+func (l *PrettyLogger) Warnw(ctx context.Context, msg string, args ...Field) {
+	l.logw(ctx, level.LevelWarn, msg, args...)
+}
+
+// Errorw 输出带上下文与结构化字段的 error 日志。
+func (l *PrettyLogger) Errorw(ctx context.Context, msg string, args ...Field) {
+	l.logw(ctx, level.LevelError, msg, args...)
+}
+
+// Fatalw 输出带上下文与结构化字段的 fatal 日志并退出进程。
+func (l *PrettyLogger) Fatalw(ctx context.Context, msg string, args ...Field) {
+	l.logw(ctx, level.LevelError, msg, args...)
 	os.Exit(1)
 }
 

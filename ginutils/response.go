@@ -27,7 +27,7 @@ const (
 
 type Ret[T any] struct {
 	Code    int `json:"code"`
-	Data    T   `json:"data,omitempty"`
+	Data    T   `json:"data,omitzero"`
 	Message any `json:"message,omitempty"`
 }
 

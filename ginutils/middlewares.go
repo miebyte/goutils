@@ -29,7 +29,7 @@ var (
 )
 
 func init() {
-	Logger = logging.NewPrettyLogger(os.Stdout, logging.WithModule("GINLIBS"))
+	Logger = logging.NewPrettyLogger(os.Stdout, logging.WithModule("GINUTILS"))
 	Logger.WithSource = false
 	Logger.Enable(level.LevelDebug)
 }

@@ -20,6 +20,26 @@ func GetContextFields(c context.Context) CtxFields {
 	return field.Clone()
 }
 
+func copyContextFields(dst CtxFields, c context.Context) CtxFields {
+	val := c.Value(FieldContextKey)
+	fields, ok := val.(CtxFields)
+	if dst == nil {
+		dst = make(CtxFields, len(fields))
+	} else {
+		clear(dst)
+	}
+
+	if !ok || len(fields) == 0 {
+		return dst
+	}
+
+	for key, value := range fields {
+		dst[key] = value
+	}
+
+	return dst
+}
+
 func CloneContextFields(c context.Context) context.Context {
 	fields := GetContextFields(c)
 

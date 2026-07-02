@@ -8,7 +8,10 @@ import (
 	"sync"
 
 	"github.com/miebyte/goutils/logging/level"
+	"github.com/miebyte/goutils/utils"
 )
+
+var _ Logger = (*PrettyLogger)(nil)
 
 type PrettyLogger struct {
 	Out        io.Writer
@@ -66,10 +69,17 @@ func (l *PrettyLogger) newEntry() *Entry {
 }
 
 func (l *PrettyLogger) releaseEntry(entry *Entry) {
-	entry.Data = map[string]any{}
+	if entry.Data == nil {
+		entry.Data = make(CtxFields, 6)
+	} else {
+		clear(entry.Data)
+	}
 	entry.Buffer = nil
 	entry.Ctx = nil
 	entry.Source = ""
+	entry.WithoutMasking = false
+	clear(entry.Fields)
+	entry.Fields = entry.Fields[:0]
 
 	l.entryPool.Put(entry)
 }
@@ -153,6 +163,35 @@ func (l *PrettyLogger) logw(ctx context.Context, lev level.Level, msg string, ar
 		entry.Log(lev, msg)
 		l.releaseEntry(entry)
 	}
+}
+
+func (l *PrettyLogger) logs(ctx context.Context, lev level.Level, msg string, args ...any) {
+	if l.IsLevelEnabled(lev) {
+		entry := l.newEntry()
+		entry.Ctx = ctx
+		entry.Fields = append(entry.Fields[:0], l.parseSugaredArgs(args)...)
+		entry.Log(lev, msg)
+		l.releaseEntry(entry)
+	}
+}
+
+func (l *PrettyLogger) parseSugaredArgs(args []any) []Field {
+	if len(args) == 0 {
+		return nil
+	}
+
+	fields := make([]Field, 0, len(args)/2)
+
+	for key, value := range utils.Pairwise(args) {
+		key, ok := key.(string)
+		if !ok || key == "" {
+			continue
+		}
+
+		fields = append(fields, Any(key, value))
+	}
+
+	return fields
 }
 
 func (l *PrettyLogger) Info(msg string) {
@@ -239,10 +278,65 @@ func (l *PrettyLogger) Fatalw(ctx context.Context, msg string, args ...Field) {
 	os.Exit(1)
 }
 
+// Infos 输出带上下文与 key/value 字段的 info 日志。
+func (l *PrettyLogger) Infos(ctx context.Context, msg string, args ...any) {
+	l.logs(ctx, level.LevelInfo, msg, args...)
+}
+
+// Debugs 输出带上下文与 key/value 字段的 debug 日志。
+func (l *PrettyLogger) Debugs(ctx context.Context, msg string, args ...any) {
+	l.logs(ctx, level.LevelDebug, msg, args...)
+}
+
+// Warns 输出带上下文与 key/value 字段的 warn 日志。
+func (l *PrettyLogger) Warns(ctx context.Context, msg string, args ...any) {
+	l.logs(ctx, level.LevelWarn, msg, args...)
+}
+
+// Errors 输出带上下文与 key/value 字段的 error 日志。
+func (l *PrettyLogger) Errors(ctx context.Context, msg string, args ...any) {
+	l.logs(ctx, level.LevelError, msg, args...)
+}
+
+// Fatals 输出带上下文与 key/value 字段的 fatal 日志并退出进程。
+func (l *PrettyLogger) Fatals(ctx context.Context, msg string, args ...any) {
+	l.logs(ctx, level.LevelError, msg, args...)
+	os.Exit(1)
+}
+
 func (l *PrettyLogger) PanicError(err error, args ...any) {
 	if err == nil {
 		return
 	}
 
 	l.logf(level.LevelError, err.Error(), args...)
+}
+
+func (l *PrettyLogger) Log(lev level.Level, msg string, opt *LogOption) {
+	if l.IsLevelEnabled(lev) {
+		entry := l.newEntry()
+		entryApplyOptions(entry, opt)
+		entry.Log(lev, msg)
+		l.releaseEntry(entry)
+	}
+}
+
+func (l *PrettyLogger) Logc(ctx context.Context, lev level.Level, msg string, opt *LogOption) {
+	if l.IsLevelEnabled(lev) {
+		entry := l.newEntry()
+		entry.Ctx = ctx
+		entryApplyOptions(entry, opt)
+		entry.Log(lev, msg)
+		l.releaseEntry(entry)
+	}
+}
+
+func entryApplyOptions(entry *Entry, opt *LogOption) {
+	if opt == nil {
+		return
+	}
+
+	if opt.WithoutMasking {
+		entry.WithoutMasking = true
+	}
 }

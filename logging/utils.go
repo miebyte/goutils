@@ -26,8 +26,30 @@ func GetStructName(i any) string {
 	return tPtr.Name()
 }
 
-func GetFuncName(i any) string {
-	return runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
+func GetFuncName(fn any) string {
+	v := reflect.ValueOf(fn)
+	if v.Kind() != reflect.Func {
+		return "nonfunc"
+	}
+	pc := v.Pointer()
+	f := runtime.FuncForPC(pc)
+	if f == nil {
+		return "unknown"
+	}
+	return f.Name()
+}
+
+func GetShortFuncName(fn any) string {
+	full := GetFuncName(fn)
+	if full == "" {
+		return full
+	}
+
+	if i := strings.LastIndex(full, "."); i >= 0 && i+1 < len(full) {
+		return full[i+1:]
+	}
+
+	return full
 }
 
 // TimeFuncDuration returns the duration consumed by function.
@@ -64,7 +86,7 @@ func Jsonify(v any) string {
 	return string(d)
 }
 
-func JsonifyNoIndent(v any) string {
+func JsonifyNoIndent(v interface{}) string {
 	d, err := json.Marshal(v)
 	PanicError(err)
 	return string(d)

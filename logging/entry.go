@@ -24,7 +24,7 @@ var (
 const (
 	maximumCallerDepth int = 25
 	defaultFrames      int = 4
-	sourceContextKey       = "goutils:source:key"
+	sourceContextKey       = "go-utils:source:key"
 )
 
 type CtxFields map[string]any
@@ -111,7 +111,7 @@ func (entry *Entry) Log(lev level.Level, msg string) {
 	entry.Message = msg
 
 	if entry.Ctx != nil {
-		entry.Data = GetContextFields(entry.Ctx)
+		entry.Data = copyContextFields(entry.Data, entry.Ctx)
 	} else {
 		entry.Ctx = context.TODO()
 	}

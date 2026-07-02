@@ -48,10 +48,30 @@ type FieldLogger interface {
 	Fatalw(context.Context, string, ...Field)
 }
 
+type SugaredLogger interface {
+	Infos(context.Context, string, ...any)
+	Debugs(context.Context, string, ...any)
+	Warns(context.Context, string, ...any)
+	Errors(context.Context, string, ...any)
+	Fatals(context.Context, string, ...any)
+}
+
+type LogOption struct {
+	WithoutMasking bool
+}
+
+type OriginLogger interface {
+	Log(lev level.Level, msg string, opt *LogOption)
+	Logc(ctx context.Context, lev level.Level, msg string, opt *LogOption)
+}
+
 type Logger interface {
 	baseLogger
 	MessageLogger
 	ContextLogger
+	FieldLogger
+	SugaredLogger
 	FormatLogger
+	OriginLogger
 	PanicError(error, ...any)
 }

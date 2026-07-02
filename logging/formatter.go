@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mattn/go-isatty"
@@ -37,6 +38,8 @@ type TextFormatter struct {
 	DisableColors bool
 	CompactMode   bool
 }
+
+const timestampFormat = "2006-01-02 15:04:05.000"
 
 func checkIfTerminal(w io.Writer) bool {
 	if _, exists := os.LookupEnv("NO_COLOR"); exists {
@@ -95,20 +98,15 @@ func (f *TextFormatter) Format(e *Entry) ([]byte, error) {
 
 func (f *TextFormatter) formatStandard(buf *bytes.Buffer, e *Entry) {
 	// LEVEL
-	buf.WriteString(f.formatLevel(e.Level))
+	f.writeLevel(buf, e.Level)
 	buf.WriteString(" | ")
 
 	// TIME
-	buf.WriteString(e.Time.Format("2006-01-02 15:04:05.000"))
+	writeTimestamp(buf, e.Time)
 	buf.WriteString(" | ")
 
 	// GROUP
-	groups := append([]string{e.Logger.module}, GetGroupKey(e.Data)...)
-	if len(groups) > 0 {
-		buf.WriteString(strings.Join(groups, "/"))
-	} else {
-		buf.WriteString("DEFAULT")
-	}
+	writeGroups(buf, e.Logger.module, GetGroupKey(e.Data))
 	buf.WriteString(" | ")
 
 	// SOURCE
@@ -119,17 +117,7 @@ func (f *TextFormatter) formatStandard(buf *bytes.Buffer, e *Entry) {
 
 	// CtxFields
 	if len(e.Data) > 0 {
-		keys := make([]string, 0, len(e.Data))
-		for k := range e.Data {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		fieldParts := make([]string, 0, len(keys))
-		for _, k := range keys {
-			fieldParts = append(fieldParts, fmt.Sprintf("%s:%v", k, e.Data[k]))
-		}
-		buf.WriteString(strings.Join(fieldParts, " "))
+		writeContextFields(buf, e.Data, ':')
 		buf.WriteString(" | ")
 	}
 
@@ -155,21 +143,18 @@ func (f *TextFormatter) addFields(buf *bytes.Buffer, fields []Field) {
 
 func (f *TextFormatter) formatCompact(buf *bytes.Buffer, e *Entry) {
 	// LEVEL
-	buf.WriteString(f.formatLevel(e.Level))
+	f.writeLevel(buf, e.Level)
 	buf.WriteString(" ")
 
 	// TIME
-	buf.WriteString(e.Time.Format("2006-01-02 15:04:05.000"))
+	writeTimestamp(buf, e.Time)
 	buf.WriteString(" ")
 
 	// GROUP
-	groups := append([]string{e.Logger.module}, GetGroupKey(e.Data)...)
-	if len(groups) > 0 {
-		buf.WriteString("[")
-		buf.WriteString(strings.Join(groups, "/"))
-		buf.WriteString("]")
-		buf.WriteString(" ")
-	}
+	buf.WriteString("[")
+	writeGroups(buf, e.Logger.module, GetGroupKey(e.Data))
+	buf.WriteString("]")
+	buf.WriteString(" ")
 
 	// SOURCE
 	if e.Logger.WithSource {
@@ -179,17 +164,7 @@ func (f *TextFormatter) formatCompact(buf *bytes.Buffer, e *Entry) {
 
 	// FIELDS
 	if len(e.Data) > 0 {
-		keys := make([]string, 0, len(e.Data))
-		for k := range e.Data {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		fieldParts := make([]string, 0, len(keys))
-		for _, k := range keys {
-			fieldParts = append(fieldParts, fmt.Sprintf("%s=%v", k, e.Data[k]))
-		}
-		buf.WriteString(strings.Join(fieldParts, " "))
+		writeContextFields(buf, e.Data, '=')
 		buf.WriteString(" ")
 	}
 
@@ -200,15 +175,113 @@ func (f *TextFormatter) formatCompact(buf *bytes.Buffer, e *Entry) {
 	f.addFields(buf, e.Fields)
 }
 
-func (f *TextFormatter) formatLevel(l level.Level) string {
+func writeTimestamp(buf *bytes.Buffer, t time.Time) {
+	var scratch [32]byte
+	buf.Write(t.AppendFormat(scratch[:0], timestampFormat))
+}
+
+func writeGroups(buf *bytes.Buffer, module string, groups []string) {
+	buf.WriteString(module)
+	for _, group := range groups {
+		buf.WriteByte('/')
+		buf.WriteString(group)
+	}
+}
+
+func writeContextFields(buf *bytes.Buffer, data CtxFields, separator byte) {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for i, k := range keys {
+		if i > 0 {
+			buf.WriteByte(' ')
+		}
+
+		buf.WriteString(k)
+		buf.WriteByte(separator)
+		writeValue(buf, data[k])
+	}
+}
+
+func writeValue(buf *bytes.Buffer, value any) {
+	switch v := value.(type) {
+	case nil:
+		buf.WriteString("<nil>")
+	case string:
+		buf.WriteString(v)
+	case bool:
+		writeBool(buf, v)
+	case int:
+		writeInt(buf, int64(v))
+	case int64:
+		writeInt(buf, v)
+	case int32:
+		writeInt(buf, int64(v))
+	case int16:
+		writeInt(buf, int64(v))
+	case int8:
+		writeInt(buf, int64(v))
+	case uint:
+		writeUint(buf, uint64(v))
+	case uint64:
+		writeUint(buf, v)
+	case uint32:
+		writeUint(buf, uint64(v))
+	case uint16:
+		writeUint(buf, uint64(v))
+	case uint8:
+		writeUint(buf, uint64(v))
+	case uintptr:
+		writeUint(buf, uint64(v))
+	case float64:
+		writeFloat(buf, v, 64)
+	case float32:
+		writeFloat(buf, float64(v), 32)
+	default:
+		_, _ = fmt.Fprint(buf, v)
+	}
+}
+
+func writeBool(buf *bytes.Buffer, value bool) {
+	var scratch [5]byte
+	buf.Write(strconv.AppendBool(scratch[:0], value))
+}
+
+func writeInt(buf *bytes.Buffer, value int64) {
+	var scratch [20]byte
+	buf.Write(strconv.AppendInt(scratch[:0], value, 10))
+}
+
+func writeUint(buf *bytes.Buffer, value uint64) {
+	var scratch [20]byte
+	buf.Write(strconv.AppendUint(scratch[:0], value, 10))
+}
+
+func writeFloat(buf *bytes.Buffer, value float64, bitSize int) {
+	var scratch [32]byte
+	buf.Write(strconv.AppendFloat(scratch[:0], value, 'g', -1, bitSize))
+}
+
+func (f *TextFormatter) writeLevel(buf *bytes.Buffer, l level.Level) {
 	levelText := l.String()
-	formatString := "%-" + strconv.Itoa(f.levelTextMaxLength) + "s"
-	levelText = fmt.Sprintf(formatString, levelText)
 
 	if f.isColored() {
-		return fmt.Sprintf("\x1b[%dm%s\x1b[0m", f.colorForLevel(l), levelText)
+		buf.WriteString("\x1b[")
+		writeInt(buf, int64(f.colorForLevel(l)))
+		buf.WriteByte('m')
 	}
-	return levelText
+
+	buf.WriteString(levelText)
+	for padding := f.levelTextMaxLength - utf8.RuneCountInString(levelText); padding > 0; padding-- {
+		buf.WriteByte(' ')
+	}
+
+	if f.isColored() {
+		buf.WriteString("\x1b[0m")
+	}
 }
 
 func (f *TextFormatter) colorForLevel(l level.Level) int {

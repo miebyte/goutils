@@ -304,12 +304,21 @@ func (l *PrettyLogger) Fatals(ctx context.Context, msg string, args ...any) {
 	os.Exit(1)
 }
 
+// PanicError 在错误非空时记录错误日志并触发 panic。
 func (l *PrettyLogger) PanicError(err error, args ...any) {
 	if err == nil {
 		return
 	}
 
-	l.logf(level.LevelError, err.Error(), args...)
+	var s string
+	if len(args) > 0 {
+		s = err.Error() + ":" + fmt.Sprint(args...)
+	} else {
+		s = err.Error()
+	}
+
+	l.log(level.LevelError, s)
+	panic(s)
 }
 
 func (l *PrettyLogger) Log(lev level.Level, msg string, opt *LogOption) {

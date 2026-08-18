@@ -10,7 +10,6 @@ package logging
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"time"
@@ -142,17 +141,5 @@ func Fatals(ctx context.Context, msg string, v ...any) {
 }
 
 func PanicError(err error, v ...any) {
-	if err == nil {
-		return
-	}
-
-	var s string
-	if len(v) > 0 {
-		s = err.Error() + ":" + fmt.Sprint(v...)
-	} else {
-		s = err.Error()
-	}
-
-	logger.Error(s)
-	panic(s)
+	logger.PanicError(err, v...)
 }

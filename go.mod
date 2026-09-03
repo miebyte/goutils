@@ -1,6 +1,6 @@
 module github.com/miebyte/goutils
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/fsnotify/fsnotify v1.8.0

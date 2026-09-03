@@ -57,7 +57,7 @@ func handleValidateError(c *gin.Context, err error) {
 		}
 		errStr := strings.Join(errStrs, ";")
 		logging.Errorc(c.Request.Context(), "validator req data failed. error: %v", errStr)
-		ReturnErrorWithCode(c, DefaultValidateRequestDataFailedCode, errStr)
+		ReturnError(c, errStr)
 		return
 	}
 }

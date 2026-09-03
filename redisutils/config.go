@@ -2,8 +2,6 @@ package redisutils
 
 import (
 	"fmt"
-
-	"github.com/miebyte/goutils/discover"
 )
 
 type RedisConfig struct {
@@ -17,8 +15,9 @@ type RedisConfig struct {
 	Timeout  int    `json:"timeout"`
 }
 
+// Address 返回 Redis 连接地址。
 func (rc *RedisConfig) Address() string {
-	return discover.GetServiceFinder().GetAddress(rc.Server)
+	return rc.Server
 }
 
 func (conf *RedisConfig) DialGORedisClient() (*RedisClient, error) {

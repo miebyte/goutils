@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/miebyte/goutils/discover"
 	"github.com/miebyte/goutils/internal/share"
 	"github.com/pkg/errors"
 	"gorm.io/driver/mysql"
@@ -30,8 +29,9 @@ type MysqlConfig struct {
 	PoolSize int    `json:"pool_size"`
 }
 
+// Address 返回 MySQL 连接地址。
 func (c *MysqlConfig) Address() string {
-	return discover.GetServiceFinder().GetAddress(c.Instance)
+	return c.Instance
 }
 
 func (c *MysqlConfig) generateDSN() string {

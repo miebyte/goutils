@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miebyte/goutils/discover"
 	"github.com/miebyte/goutils/flags/provider"
 	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/miebyte/goutils/internal/share"
@@ -33,22 +32,18 @@ var (
 	config StringGetter
 )
 
+// Option 表示 Parse 的可选行为。
 type Option struct {
-	UseRemote   BoolGetter
 	WatchConfig BoolGetter
 }
 
+// OptionFunc 用于定制 Parse 行为。
 type OptionFunc func(opt *Option)
 
+// WithConfigWatch 启用配置文件变更监听。
 func WithConfigWatch() OptionFunc {
 	return func(opt *Option) {
 		opt.WatchConfig = func() bool { return true }
-	}
-}
-
-func WithUseRemote() OptionFunc {
-	return func(opt *Option) {
-		opt.UseRemote = func() bool { return true }
 	}
 }
 
@@ -67,24 +62,13 @@ func Parse(opts ...OptionFunc) {
 	setDebugMod()
 	parseServiceName()
 
-	if opt.UseRemote() {
-		if config() != "" {
-			defaultConfigProvider = provider.NewLocalProvider(config())
-		} else {
-			checkServiceName()
-			defaultConfigProvider = provider.NewConsulProvider(share.ServiceName(), share.Tag())
-			discover.SetConsulFinder()
-		}
-	} else {
-		configPath := config()
-		if configPath == "" {
-			configPath = sf.FindConfigFile()
-			innerlog.Logger.Debugf("find local config file: %s", configPath)
-		}
-
-		defaultConfigProvider = provider.NewLocalProvider(configPath)
+	configPath := config()
+	if configPath == "" {
+		configPath = sf.FindConfigFile()
+		innerlog.Logger.Debugf("find local config file: %s", configPath)
 	}
 
+	defaultConfigProvider = provider.NewLocalProvider(configPath)
 	sf.SetConfigProvider(defaultConfigProvider)
 
 	readConfig(opt)
@@ -119,12 +103,6 @@ func setDebugMod() {
 	logging.Enable(lev)
 }
 
-func checkServiceName() {
-	if share.ServiceName() == "" {
-		innerlog.Logger.Fatalf("ServiceName is empty, please use -s or --service to specify serviceName")
-	}
-}
-
 func initOption(opts ...OptionFunc) *Option {
 	opt := &Option{}
 
@@ -145,7 +123,6 @@ func initSuperFlags(opt *Option) {
 	share.ServiceName = StringP("serviceName", "s", share.ServiceName(), "Set the service name.")
 	share.Tag = StringP("serviceTag", "t", share.Tag(), "Set the service tag.")
 	share.Debug = Bool("debug", false, "Tag whether to enable debug mode.")
-	opt.UseRemote = Bool("useRemote", false, "Tag whether to use remote config")
 	opt.WatchConfig = Bool("watchConfig", false, "Tag whether to watch config")
 	config = StringP("configFile", "f", "", "Specify config file. (JSON-only)")
 
@@ -171,6 +148,15 @@ func watchConfig(opt *Option) {
 
 	go func() {
 		for ev := range ch {
+			if ev.Err != nil {
+				innerlog.Logger.Errorf("watch config error: %v", ev.Err)
+				continue
+			}
+			if ev.Config == nil {
+				innerlog.Logger.Warnf("watch config change skipped: empty config, key: %s", ev.Key)
+				continue
+			}
+
 			innerlog.Logger.Debugf("watch config change: %s, config: %v", ev.Key, ev.Config)
 			if ev.Key == "" {
 				sf.ReplaceConfig(ev.Config)

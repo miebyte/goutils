@@ -34,7 +34,7 @@ func Struct[T any](key string, defaultVal T, usage string) StructParser[T] {
 	}
 
 	if st.Kind() != reflect.Struct && st.Kind() != reflect.Map {
-		innerlog.Logger.PanicError(fmt.Errorf("superflags.Struct must be a struct or map, but got %s", st.Kind()))
+		innerlog.Logger.PanicError(fmt.Errorf("flags.Struct must be a struct or map, but got %s", st.Kind()))
 	}
 
 	sf.SetDefault(key, defaultVal)
@@ -255,37 +255,32 @@ func reloaderCheck(key string, out any) {
 	}
 }
 
+// tmpConfigReloader 在配置变更时解析到临时对象，校验通过后再覆盖原对象并通知业务。
 type tmpConfigReloader struct {
 	out HasReloader
 	key string
 }
 
-func (t *tmpConfigReloader) reUnmarshalReloader() error {
-	rValueOf := reflect.ValueOf(t.out)
-	if rValueOf.Kind() == reflect.Pointer {
-		rValueOf = rValueOf.Elem()
-	}
-
-	tempValue := reflect.New(rValueOf.Type())
-	if err := unmarshalKey(t.key, tempValue.Interface()); err != nil {
-		return err
-	}
-
-	rValueOf.Set(tempValue.Elem())
-
-	return nil
-}
-
+// Reload 先将新配置解析并校验到临时对象，成功后才覆盖已有对象并调用业务 Reload。
 func (t *tmpConfigReloader) Reload() {
-	if err := t.reUnmarshalReloader(); err != nil {
+	dst := reflect.ValueOf(t.out)
+	if dst.Kind() != reflect.Pointer || dst.IsNil() {
+		innerlog.Logger.Errorf("reload %s: out must be a non-nil pointer", t.key)
+		return
+	}
+	dst = dst.Elem()
+
+	tmp := reflect.New(dst.Type())
+	if err := unmarshalKey(t.key, tmp.Interface()); err != nil {
 		innerlog.Logger.Errorf("reunmarshal %s error: %v", t.key, err)
 		return
 	}
 
-	if err := structCheck(t.out); err != nil {
+	if err := structCheck(tmp.Interface()); err != nil {
 		innerlog.Logger.Errorf("%s check error: %v", t.key, err)
 		return
 	}
 
+	dst.Set(tmp.Elem())
 	t.out.Reload()
 }

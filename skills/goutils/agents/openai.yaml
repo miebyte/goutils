@@ -1,0 +1,4 @@
+interface:
+  display_name: "goutils 微服务开发规范"
+  short_description: "使用 goutils 构建符合 DDD 分层规范的 Go 服务"
+  default_prompt: "使用 $goutils 按 DDD 分层和 goutils 约定创建、修改或审查 Go 服务。"

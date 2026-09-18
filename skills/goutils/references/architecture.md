@@ -29,7 +29,7 @@
 │   │   ├── db/
 │   │   │   ├── models/             # 持久化模型
 │   │   │   ├── assembler/          # Persistence Model ↔ Domain
-│   │   │   ├── query/              # 可选：生成查询代码
+│   │   │   ├── query/              # 使用 MySQL/GORM 时必需：gorm/gen 生成查询代码
 │   │   │   ├── transaction.go      # 事务实现
 │   │   │   └── <context>.go        # 仓储实现
 │   │   ├── cache/                  # Redis 缓存、锁、仓储
@@ -108,6 +108,7 @@ Domain 默认只依赖标准库和稳定的业务语义。不要导入 `ginutils
 ## 三类模型分离
 
 - Persistence Model：匹配表结构、索引、nullable 和 GORM 标签。
+- 使用 MySQL/GORM 时必须从独立 Persistence Model 通过 `gorm.io/gen` 生成 Query，并由仓储调用；生成入口、Model 和 Query 均留在基础设施边界，不得用 DTO 充当表模型。
 - Domain Model：表达业务状态、行为和不变量。
 - Application DTO：表达用例输入输出和序列化契约。
 

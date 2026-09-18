@@ -47,6 +47,7 @@ type OrderRepository interface {
 - 持久化 Model 和 Domain Aggregate 通过 DB Assembler 转换。
 - 明确区分“未找到”、冲突、非法状态和基础设施故障。
 - 不让 Application 拼 SQL、GORM Scope 或 Redis Key。
+- MySQL/GORM 仓储必须使用 `gorm.io/gen` 生成的 Query；先补齐独立表 Model 和生成入口，再实现仓储调用。Model 变更后重新生成，验证生成结果可重复，并覆盖事务、nullable、零值更新及冲突语义。
 - 查询投影与聚合写仓储职责明显不同，可拆成 `OrderQueryRepository`。
 
 ## 事务

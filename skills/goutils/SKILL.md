@@ -32,6 +32,13 @@ API / Interface → Application → Domain ← Infrastructure
 7. 以目标项目实际 API 为准，不从旧版 `go-utils` 猜测名称。当前库使用 `flags`、`ginutils`、`cores`，不是 `superflags`、`ginlibs`。
 8. 只修改当前任务需要的代码；运行格式化、相关测试、生成命令和差异检查。
 
+## MySQL 持久化硬性要求
+
+- 使用 MySQL/GORM 时，必须定义独立的持久化 Model，并使用 `gorm.io/gen` 生成类型安全的 `query`；业务仓储必须实际使用生成的 Query，不能仅生成后闲置。
+- Model 与生成的 Query 均放在 Infrastructure；Application/Domain 不依赖 GORM、数据库 Model 或 Query。
+- 必须提供可重复执行的生成入口，锁定生成器依赖版本，保留生成文件并禁止手工修改；Model 变更后重新生成并验证。
+- 普通业务 CRUD 不使用手写 SQL 或原生 GORM 链式查询替代 Gen。版本化迁移及 Gen 无法表达的数据库专用操作可保留 SQL，并说明原因。具体实现读取 [references/mysqlutils.md](references/mysqlutils.md)。
+
 ## 按任务懒加载参考资料
 
 只读取当前任务需要的文件，不要一次性加载全部 reference。
@@ -50,7 +57,7 @@ API / Interface → Application → Domain ← Infrastructure
 
 ### 基础设施模块
 
-- MySQL、GORM、连接池或读写路由：读取 [references/mysqlutils.md](references/mysqlutils.md)。
+- MySQL、GORM、Model、Gen Query、连接池或读写路由：读取 [references/mysqlutils.md](references/mysqlutils.md)。
 - Redis、连接池、锁、值转换或函数缓存：读取 [references/redisutils.md](references/redisutils.md)。
 - 内存队列、优先队列或 Redis 队列：读取 [references/queueutils.md](references/queueutils.md)。
 - SMTP 邮件发送：读取 [references/emailutils.md](references/emailutils.md)。

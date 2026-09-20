@@ -29,7 +29,7 @@ const (
 // Ret 是统一的 JSON 响应结构。
 type Ret[T any] struct {
 	Code    int `json:"code"`
-	Data    T   `json:"data,omitzero"`
+	Data    T   `json:"data"`
 	Message any `json:"message,omitempty"`
 }
 

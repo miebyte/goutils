@@ -107,9 +107,9 @@ func LoggerMiddleware(loggers ...logging.Logger) gin.HandlerFunc {
 		}
 
 		args := []any{
+			statusCode,
 			method,
 			path,
-			statusCode,
 			spendTime,
 			clientIp,
 		}
@@ -117,7 +117,7 @@ func LoggerMiddleware(loggers ...logging.Logger) gin.HandlerFunc {
 		requestId, exists := c.Get("RequestID")
 		if exists {
 			args = append(args, requestId)
-			logFunc(c, logMsg+" RequestID=%s", args...)
+			logFunc(c, logMsg+" request_id=%s", args...)
 			return
 		}
 
@@ -125,9 +125,8 @@ func LoggerMiddleware(loggers ...logging.Logger) gin.HandlerFunc {
 	}
 }
 
-var (
-	logMsg = "Method=%s Path=%s StatusCode=%v Elapse=%v Host=%s"
-)
+// logMsg 访问日志模板：状态码、方法、路径在前，便于扫描。
+var logMsg = "%3d %-7s %s elapsed=%v ip=%s"
 
 func customRecoveryFn(c *gin.Context, err any) {
 	Logger.Errorf(

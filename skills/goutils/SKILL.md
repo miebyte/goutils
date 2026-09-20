@@ -38,6 +38,7 @@ API / Interface → Application → Domain ← Infrastructure
 - Model 与生成的 Query 均放在 Infrastructure；Application/Domain 不依赖 GORM、数据库 Model 或 Query。
 - 必须提供可重复执行的生成入口，锁定生成器依赖版本，保留生成文件并禁止手工修改；Model 变更后重新生成并验证。
 - 普通业务 CRUD 不使用手写 SQL 或原生 GORM 链式查询替代 Gen。版本化迁移及 Gen 无法表达的数据库专用操作可保留 SQL，并说明原因。具体实现读取 [references/mysqlutils.md](references/mysqlutils.md)。
+- 仓储按业务上下文拆分实现，由 `RepositoryFactory` 汇总并提供 `WithTransaction(ctx, fn(Repositories))`；Model ↔ Domain ↔ DTO 的转换集中到 `internal/converter`（或按边界分放在 assembler 包），业务代码里不散落字段搬运。表结构用 `models.AllModels()` 在组合根执行 `AutoMigrate`，删除列/表等破坏性变更单独提供版本化 SQL。
 
 ## 按任务懒加载参考资料
 
@@ -45,7 +46,7 @@ API / Interface → Application → Domain ← Infrastructure
 
 ### DDD 与开发流程
 
-- 设计目录、限界上下文、聚合、仓储、Assembler 或依赖方向：读取 [references/architecture.md](references/architecture.md)。
+- 设计目录、限界上下文、聚合、仓储、Assembler/Converter 或依赖方向：读取 [references/architecture.md](references/architecture.md)。
 - 新增用例、实现仓储、处理事务、接入 API/Worker 或审查现有代码：读取 [references/development-workflows.md](references/development-workflows.md)。
 
 ### 服务与接口模块

@@ -71,7 +71,30 @@ func (r *orderRepository) FindByID(ctx context.Context, id order.ID) (*order.Ord
 ```
 
 - 所有查询使用 `WithContext(ctx)`。
-- Model ↔ Domain 转换放 Infrastructure Assembler。
+- Model ↔ Domain 转换放 Infrastructure Assembler 或集中转换包（`internal/converter`，见 architecture.md 的「Assembler 方向」）。
+
+## 仓储工厂与 AutoMigrate
+
+单库服务推荐用一个 `RepositoryFactory` 汇总仓储，并把事务边界暴露成参数：
+
+```go
+type RepositoryFactory struct{ db *gorm.DB }
+
+func NewRepositoryFactory(db *gorm.DB) *RepositoryFactory { return &RepositoryFactory{db: db} }
+
+func (f *RepositoryFactory) User() identity.IUserRepository { return &userRepository{db: f.db} }
+
+func (f *RepositoryFactory) WithTransaction(ctx context.Context, fn func(Repositories) error) error {
+    return f.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+        return fn(&RepositoryFactory{db: tx})
+    }, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+}
+```
+
+- 应用层依赖汇总接口（`Repositories`），事务内得到的工厂绑定同一连接，仓储不会各自开事务。
+- 需要行锁/隔离级别时在 `WithTransaction` 内声明，不在仓储里偷偷切换。
+- 表结构用 `models.AllModels()` 在组合根执行 `AutoMigrate`：Model 即 Schema 的唯一来源；`AutoMigrate` 只增不删，删除列/表等破坏性变更必须单独提供版本化 SQL。
+- 需要外键时在 Model 上加关联字段并在 `gorm.Config` 里决定是否 `DisableForeignKeyConstraintWhenMigrating`；不使用外键时由应用层保证引用完整性，并在文档中写明。
 - 不把 `*gorm.DB`、GORM Model 或 SQL 条件暴露给 Application/Domain。
 - 事务内的 Repository 必须使用同一事务 Query，例如 `q.Transaction(func(tx *query.Query) error { ... })`，或从同一个事务 `*gorm.DB` 创建 `query.Use(tx)`。
 

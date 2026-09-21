@@ -6,9 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
-	"github.com/miebyte/goutils/logging"
 	"github.com/miebyte/goutils/structutils"
 	"github.com/miebyte/goutils/utils/reflectx"
 )
@@ -44,20 +42,20 @@ func validateRequestData(ctx context.Context, reqPtr any, reqKind reflect.Kind) 
 	return structutils.Validator().Struct(reqPtr)
 }
 
-func handleValidateError(c *gin.Context, err error) {
-	if err != nil {
-		errStrs := []string{}
-		verrs := new(validator.ValidationErrors)
-		if errors.As(err, verrs) {
-			for _, e := range *verrs {
-				errStrs = append(errStrs, structutils.TranslateErr(e))
-			}
-		} else {
-			errStrs = append(errStrs, err.Error())
-		}
-		errStr := strings.Join(errStrs, ";")
-		logging.Errorc(c.Request.Context(), "validator req data failed. error: %v", errStr)
-		ReturnError(c, errStr)
-		return
+// validateFailureMessage 汇总校验失败的文案，逐项使用已注册的中文翻译。
+func validateFailureMessage(err error) string {
+	if err == nil {
+		return ""
 	}
+
+	errStrs := []string{}
+	verrs := new(validator.ValidationErrors)
+	if errors.As(err, verrs) {
+		for _, e := range *verrs {
+			errStrs = append(errStrs, structutils.TranslateErr(e))
+		}
+	} else {
+		errStrs = append(errStrs, err.Error())
+	}
+	return strings.Join(errStrs, ";")
 }

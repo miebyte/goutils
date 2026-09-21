@@ -32,7 +32,7 @@ func RequestHandler[Q any](fn requestHandler[Q]) gin.HandlerFunc {
 
 		if err := bindRequestData(c, reqPtr, reqStrategies); err != nil {
 			logging.Errorc(ctx, "failed to bind request data %T. error: %v", reqPtr, err)
-			ReturnError(c, "Failed to bind request data: "+err.Error())
+			reportBindFailure(c, FailureBind, err)
 			return
 		}
 
@@ -45,7 +45,8 @@ func RequestHandler[Q any](fn requestHandler[Q]) gin.HandlerFunc {
 		// 数据校验
 		validateErr := validateRequestData(ctx, reqPtr, reqKind)
 		if validateErr != nil {
-			handleValidateError(c, validateErr)
+			logging.Errorc(ctx, "validator req data failed. error: %v", validateFailureMessage(validateErr))
+			reportBindFailure(c, FailureValidate, validateErr)
 			return
 		}
 
@@ -66,7 +67,7 @@ func RequestResponseHandler[Q any, P any](fn requestResponseHandler[Q, P]) gin.H
 
 		if err := bindRequestData(c, reqPtr, reqStrategies); err != nil {
 			logging.Errorc(ctx, "failed to bind request data %T. error: %v", reqPtr, err)
-			ReturnError(c, "Failed to bind request data: "+err.Error())
+			reportBindFailure(c, FailureBind, err)
 			return
 		}
 
@@ -79,7 +80,8 @@ func RequestResponseHandler[Q any, P any](fn requestResponseHandler[Q, P]) gin.H
 		// 数据校验
 		validateErr := validateRequestData(ctx, reqPtr, reqKind)
 		if validateErr != nil {
-			handleValidateError(c, validateErr)
+			logging.Errorc(ctx, "validator req data failed. error: %v", validateFailureMessage(validateErr))
+			reportBindFailure(c, FailureValidate, validateErr)
 			return
 		}
 

@@ -36,10 +36,10 @@ func validateRequestData(ctx context.Context, reqPtr any, reqKind reflect.Kind) 
 			return structutils.Validator().VarCtx(ctx, reqVal.Interface(), "dive")
 		// 退化为结构体校验
 		default:
-			return structutils.Validator().Struct(reqPtr)
+			return structutils.Validator().StructCtx(ctx, reqPtr)
 		}
 	}
-	return structutils.Validator().Struct(reqPtr)
+	return structutils.Validator().StructCtx(ctx, reqPtr)
 }
 
 // validateFailureMessage 汇总校验失败的文案，逐项使用已注册的中文翻译。

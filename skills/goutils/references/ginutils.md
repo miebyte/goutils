@@ -45,7 +45,7 @@ func orderRouter(app OrderApplication) ginutils.Router {
 func (api *API) SetupRouter() http.Handler {
     engine := ginutils.NewServerHandler(
         ginutils.WithMiddleware(
-            middleware.RecoveryMiddleware(),      // 框架默认 recovery 会返回业务成功码
+            middleware.RecoveryMiddleware(),      // 按需覆盖默认 recovery 的响应
             middleware.NoCacheMiddleware(),
             middleware.OriginMiddleware(api.config.Origin),
             observeOperations(),
@@ -96,9 +96,13 @@ func getOrderHandler(app OrderApplication) gin.HandlerFunc {
 ```
 
 - 使用 `json`、`uri`、`form`、`header` 和 `validate` Tag 表达协议。
+- 多来源绑定顺序为 Body → URI → Query → Header；框架沿用 Gin 的绑定规则，不保证字段只从标注的单一来源赋值。缺少 `form`、`header` 等 Tag 时，Gin 可能按 Go 字段名绑定，后面的来源可能覆盖前面的值。
+- 开发者负责隔离字段来源：拆分不同来源的请求结构，或对不允许的来源显式设置 `"-"`。例如 JSON/URI/Query/Header 混合请求中的路径 ID 使用 `uri:"id" json:"-" form:"-" header:"-"`；同时支持 XML/YAML 时，也要排除对应来源。
+- 空 Query/Header 仍应用 Tag 的默认值；表单 Body 已经绑定时跳过空 Query，避免默认值覆盖表单值。Body 根据是否存在请求流判断，不依赖 Content-Length 为正数。
+- 多来源请求统一使用 `validate` 标签，校验在全部绑定和 mold 清洗后执行，并传递请求 Context。Gin 原生 `binding` 标签仍会在每次 `ShouldBind*` 时提前校验，不要在这类请求中混用。
 - 始终把 `c.Request.Context()` 传给 Application。
 - 列表请求会逐项修饰和校验。
-- 数据修饰失败当前只记录日志，校验失败会直接返回错误响应；不要把关键业务校验只放在 modifier。
+- 数据修饰或校验失败都会返回错误响应，不调用后续业务函数；不要把关键业务校验只放在 modifier。
 - `RequestResponseHandler` 返回 `nil, nil` 时不会写响应，只有刻意自行处理响应时才这样做。
 - 校验失败与绑定失败默认返回 HTTP 200 + 失败业务码；要区分「客户端请求非法」，需要在项目里统一包装相应错误。
 
@@ -109,7 +113,7 @@ func getOrderHandler(app OrderApplication) gin.HandlerFunc {
 ```go
 type Ret[T any] struct {
     Code    int `json:"code"`
-    Data    T   `json:"data,omitzero"`
+    Data    T   `json:"data"`
     Message any `json:"message,omitempty"`
 }
 ```
@@ -160,7 +164,6 @@ func HandleRouterError(c *gin.Context, err error, logMsg string, fallback errcod
 
 ## 日志与敏感信息
 
-- `LoggingRequest(header)` 会记录请求体，并可选择记录 Header；请求体最多记录约 1 KiB。
-- Header 或 Body 可能含 Token、密码时，不要启用未脱敏的请求日志。
+- 已移除 `LoggingRequest`、`WithLoggingRequest` 及请求日志脱敏配置入口；框架不提供读取请求体的日志中间件。
 - `LoggerMiddleware` 负责访问日志；不要再在每个 Handler 重复记录同一条请求摘要。
 - 会话、身份等请求级字段建议由中间件写入 `context`（如 `logging.With(ctx, "UserID", id)`），便于后续日志统一带上下文。

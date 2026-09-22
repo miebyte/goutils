@@ -177,10 +177,6 @@ func WithRouterHandler(routers ...Router) Option {
 	})
 }
 
-func WithLoggingRequest(header bool) gin.HandlerFunc {
-	return LoggingRequest(header)
-}
-
 func WithHiddenRoutesLog() gin.HandlerFunc {
 	gin.DefaultWriter = io.Discard
 	return nil

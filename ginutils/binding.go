@@ -1,6 +1,7 @@
 package ginutils
 
 import (
+	"net/http"
 	"reflect"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +18,8 @@ type bindStrategy interface {
 type headerBind struct{}
 
 func (b *headerBind) Need(c *gin.Context) bool {
-	return len(c.Request.Header) > 0
+	// 空 Header 也需要应用字段的 default 标签。
+	return true
 }
 
 func (b *headerBind) Bind(c *gin.Context, obj any) error {
@@ -37,7 +39,15 @@ func (b *urlBind) Bind(c *gin.Context, obj any) error {
 type queryBind struct{}
 
 func (b *queryBind) Need(c *gin.Context) bool {
-	return len(c.Request.URL.Query()) > 0
+	if len(c.Request.URL.Query()) == 0 && (&bodyBind{}).Need(c) {
+		binder := binding.Default(c.Request.Method, c.ContentType())
+		if binder == binding.Form || binder == binding.FormMultipart {
+			// 表单 Body 已完成绑定，避免空 Query 的默认值覆盖表单值。
+			return false
+		}
+	}
+
+	return true
 }
 
 func (b *queryBind) Bind(c *gin.Context, obj any) error {
@@ -47,7 +57,7 @@ func (b *queryBind) Bind(c *gin.Context, obj any) error {
 type bodyBind struct{}
 
 func (b *bodyBind) Need(c *gin.Context) bool {
-	return c.Request.ContentLength > 0
+	return c.Request.Body != nil && c.Request.Body != http.NoBody
 }
 
 func (b *bodyBind) Bind(c *gin.Context, obj any) error {
@@ -61,17 +71,8 @@ func ShouldBind(c *gin.Context, obj any) error {
 		return err
 	}
 
-	return structutils.Validator().Struct(obj)
+	return structutils.Validator().StructCtx(c.Request.Context(), obj)
 }
-
-var (
-	strategies = []bindStrategy{
-		&bodyBind{},
-		&headerBind{},
-		&urlBind{},
-		&queryBind{},
-	}
-)
 
 func bindRequestData(c *gin.Context, reqPtr any, reqStrategies []bindStrategy) error {
 	for _, strategy := range reqStrategies {

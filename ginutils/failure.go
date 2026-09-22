@@ -20,9 +20,11 @@ const (
 	FailureBind FailureStage = iota
 	// FailureValidate 表示请求数据校验失败，例如必填项为空。
 	FailureValidate
+	// FailureModify 表示请求数据清洗失败，例如修饰器执行出错。
+	FailureModify
 )
 
-// BindFailureHandler 把请求数据绑定或校验失败转换为响应错误。返回值交给
+// BindFailureHandler 把请求数据绑定、清洗或校验失败转换为响应错误。返回值交给
 // ReturnError，因此返回实现了 ErrCoder 与 HTTPStatusCoder 的 error 可以同时
 // 自定义业务码与 HTTP 状态码；返回字符串时业务码为 -1、HTTP 状态码为 200。
 type BindFailureHandler func(c *gin.Context, stage FailureStage, err error) any
@@ -47,8 +49,12 @@ func reportBindFailure(c *gin.Context, stage FailureStage, err error) {
 
 // defaultBindFailureMessage 返回默认的失败文案。
 func defaultBindFailureMessage(stage FailureStage, err error) any {
-	if stage == FailureValidate {
+	switch stage {
+	case FailureValidate:
 		return validateFailureMessage(err)
+	case FailureModify:
+		return "Failed to modify request data: " + err.Error()
+	default:
+		return "Failed to bind request data: " + err.Error()
 	}
-	return "Failed to bind request data: " + err.Error()
 }

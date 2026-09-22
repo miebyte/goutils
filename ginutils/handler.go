@@ -36,10 +36,12 @@ func RequestHandler[Q any](fn requestHandler[Q]) gin.HandlerFunc {
 			return
 		}
 
-		// 数据清洗, 忽略错误
+		// 数据清洗
 		modifyErr := modifyRequestData(ctx, reqPtr, reqKind)
 		if modifyErr != nil {
-			logging.Errorc(ctx, "failed to modify reqPtr(%T). error: %v", reqPtr, modifyErr)
+			logging.Errorc(ctx, "modify req data failed. error: %v", modifyErr)
+			reportBindFailure(c, FailureModify, modifyErr)
+			return
 		}
 
 		// 数据校验
@@ -71,10 +73,12 @@ func RequestResponseHandler[Q any, P any](fn requestResponseHandler[Q, P]) gin.H
 			return
 		}
 
-		// 数据清洗, 忽略错误
+		// 数据清洗
 		modifyErr := modifyRequestData(ctx, reqPtr, reqKind)
 		if modifyErr != nil {
-			logging.Errorc(ctx, "failed to modify reqPtr(%T). error: %v", reqPtr, modifyErr)
+			logging.Errorc(ctx, "modify req data failed. error: %v", modifyErr)
+			reportBindFailure(c, FailureModify, modifyErr)
+			return
 		}
 
 		// 数据校验

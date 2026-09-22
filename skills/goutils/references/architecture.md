@@ -14,10 +14,9 @@
 ├── internal/
 │   ├── app/                        # Application Layer
 │   │   ├── dto/                    # 用例输入与输出
-│   │   ├── assembler/              # Application DTO ↔ Domain（与 internal/converter 二选一）
+│   │   ├── mapper/                 # DTO ↔ Domain；有足够转换逻辑时创建
 │   │   ├── services/               # Application Service
 │   │   └── ports/                  # 可选：事务、事件、消息、文件等技术端口
-│   ├── converter/                  # 可选：Model/Domain/DTO 的集中转换包（见「Assembler 方向」）
 │   ├── domain/                     # Domain Layer
 │   │   └── <bounded-context>/
 │   │       ├── entity.go           # 聚合根与实体
@@ -28,6 +27,7 @@
 │   │       └── errors.go           # 可选：领域错误
 │   ├── infra/                      # Infrastructure Layer
 │   │   ├── db/
+│   │   │   ├── mapper/             # Persistence Model ↔ Domain；有足够转换逻辑时创建
 │   │   │   ├── models/             # 持久化模型（含 AllModels，供组合根 AutoMigrate）
 │   │   │   ├── query/              # 使用 MySQL/GORM 时必需：gorm/gen 生成查询代码
 │   │   │   ├── transaction.go      # 仓储工厂与 WithTransaction
@@ -115,16 +115,12 @@ Domain 默认只依赖标准库和稳定的业务语义。不要导入 `ginutils
 
 字段相似不代表可以复用同一个结构体。数据库模型变化不应直接改变 API；API 字段变化也不应迫使 Domain 引入协议标签。
 
-## Assembler 方向
+## 边界转换
 
-转换逻辑归属于跨越边界的外层，两种组织方式选其一并保持一致：
-
-- **按边界分开放**（转换点少时）：`internal/app/assembler` 做 DTO ↔ Domain，`internal/infra/db/assembler` 做 Persistence Model ↔ Domain。
-- **集中一个转换包**（转换点多时，推荐）：`internal/converter` 同时做 Model ↔ Domain ↔ DTO，按 `<X>ModelToDomain`、`<X>DomainToModel`、`<X>DomainToDTO` 命名，构造为 `Converter` 结构体（无状态，方法挂在它上面便于注入与测试）。
-
-集中转换包与「不要建万能转换包」并不冲突：`converter` 只做字段映射与类型转换，不承载业务判断，也不反向被 Domain 依赖；Model、Domain、DTO 三者依然独立演进，字段相似不代表可以复用同一个结构体。
-
-API 专属展示转换可以放 API 层。不要在 Domain 里写 Model 或 DTO 的转换函数。
+- Application 边界负责 DTO ↔ Domain；转换较多时放 `internal/app/mapper`，少量无状态函数可留在对应 Application 包。
+- Infrastructure 边界负责 Persistence Model ↔ Domain；转换较多时放 `internal/infra/db/mapper`，少量无状态函数可留在对应仓储包。
+- 按 `<X>DTOToDomain`、`<X>DomainToDTO`、`<X>ModelToDomain`、`<X>DomainToModel` 命名。Mapper 只做字段映射和类型转换；仓储先收集查询结果，再调用其边界内的 Mapper。
+- 不建同时依赖 DTO 和 Persistence Model 的集中转换层，不直接做 Model ↔ DTO 转换。API 专属展示转换可以放 API 层；Domain 不依赖 Mapper、DTO 或 Persistence Model。
 
 ## 仓储工厂与事务
 

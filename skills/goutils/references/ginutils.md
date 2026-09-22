@@ -118,7 +118,7 @@ type Ret[T any] struct {
 - 默认失败业务码为 `-1`。
 - 错误实现 `ErrCoder`（`Code() int`）可提供业务码。
 - 错误实现 `HTTPStatusCoder`（`HTTPStatus() int`），或经 `WithHTTPStatus` 包装，可提供 HTTP 状态码。
-- 没有 HTTP 状态信息时，`ReturnError` 默认 HTTP 200；不要把业务失败码和 HTTP 状态混为一谈。
+- 没有 HTTP 状态信息时，`ReturnError` 默认 HTTP 200（`ginutils.DefaultErrorHTTPStatus`），可在启动时用 `ginutils.SetDefaultErrorHTTPStatus(status)` 改成其它状态码，传入非正数则恢复默认；不要把业务失败码和 HTTP 状态混为一谈。
 
 推荐的错误契约（业务码与 HTTP 状态各管一件事）：
 

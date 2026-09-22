@@ -71,7 +71,7 @@ func (r *orderRepository) FindByID(ctx context.Context, id order.ID) (*order.Ord
 ```
 
 - 所有查询使用 `WithContext(ctx)`。
-- Model ↔ Domain 转换放 Infrastructure Assembler 或集中转换包（`internal/converter`，见 architecture.md 的「Assembler 方向」）。
+- Model ↔ Domain 转换留在 Infrastructure，可放对应仓储包或 `internal/infra/db/mapper`；不要让 Application 依赖 Model，也不要跨过 Domain 直接转换成 DTO。
 
 ## 仓储工厂与 AutoMigrate
 

@@ -68,7 +68,7 @@ func ReturnSuccess(c *gin.Context, data any) {
 
 // ReturnError 返回失败响应，HTTP 状态码默认 200。
 func ReturnError(c *gin.Context, message any) {
-	c.JSON(resolveHTTPStatus(message), ErrorRet(message))
+	c.JSON(resolveErrorResponseStatus(message), ErrorRet(message))
 }
 
 // ReturnErrorWithStatus 以指定 HTTP 状态码返回失败响应。

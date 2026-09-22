@@ -171,3 +171,44 @@ func TestWithHTTPStatusWrapsErrCoder(t *testing.T) {
 		t.Fatalf("code = %d, want 2001", ret.Code)
 	}
 }
+
+func TestSetDefaultErrorHTTPStatus(t *testing.T) {
+	SetDefaultErrorHTTPStatus(http.StatusInternalServerError)
+	defer SetDefaultErrorHTTPStatus(DefaultErrorHTTPStatus)
+
+	c, w := newTestContext()
+	ReturnError(c, "failed")
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+}
+
+func TestSetDefaultErrorHTTPStatusRecoversOnNonPositive(t *testing.T) {
+	SetDefaultErrorHTTPStatus(http.StatusInternalServerError)
+	SetDefaultErrorHTTPStatus(0)
+	defer SetDefaultErrorHTTPStatus(DefaultErrorHTTPStatus)
+
+	if errorHTTPStatus != DefaultErrorHTTPStatus {
+		t.Fatalf("default status = %d, want %d", errorHTTPStatus, DefaultErrorHTTPStatus)
+	}
+
+	c, w := newTestContext()
+	ReturnError(c, "failed")
+
+	if w.Code != DefaultErrorHTTPStatus {
+		t.Fatalf("status = %d, want %d", w.Code, DefaultErrorHTTPStatus)
+	}
+}
+
+func TestSetDefaultErrorHTTPStatusKeepsExplicitStatus(t *testing.T) {
+	SetDefaultErrorHTTPStatus(http.StatusInternalServerError)
+	defer SetDefaultErrorHTTPStatus(DefaultErrorHTTPStatus)
+
+	c, w := newTestContext()
+	ReturnError(c, WithHTTPStatus(errors.New("gone"), http.StatusGone))
+
+	if w.Code != http.StatusGone {
+		t.Fatalf("status = %d, want 410", w.Code)
+	}
+}

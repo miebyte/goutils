@@ -123,15 +123,15 @@ func (gl *gormLogger) LogMode(lv logger.LogLevel) logger.Interface {
 }
 
 func (gl *gormLogger) Info(ctx context.Context, msg string, data ...any) {
-	gl.logger.Infoc(gl.wrapPrefix(ctx), msg, data)
+	gl.logger.Infoc(gl.wrapPrefix(ctx), msg, data...)
 }
 
 func (gl *gormLogger) Warn(ctx context.Context, msg string, data ...any) {
-	gl.logger.Warnc(gl.wrapPrefix(ctx), msg, data)
+	gl.logger.Warnc(gl.wrapPrefix(ctx), msg, data...)
 }
 
 func (gl *gormLogger) Error(ctx context.Context, msg string, data ...any) {
-	gl.logger.Errorc(gl.wrapPrefix(ctx), msg, data)
+	gl.logger.Errorc(gl.wrapPrefix(ctx), msg, data...)
 }
 
 func (gl *gormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {

@@ -105,8 +105,3 @@ func getConfigProvider(opt *Option) (ConfigProvider, error) {
 
 	return local.NewLocalProvider(opt.ConfigPath), nil
 }
-
-const (
-	ProviderNacos = "nacos"
-	ProviderZk    = "zk"
-)

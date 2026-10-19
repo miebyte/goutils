@@ -10,25 +10,73 @@ package cores
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/miebyte/goutils/internal/innerlog"
+	"github.com/miebyte/goutils/logging"
 	"github.com/pkg/errors"
-	"github.com/rs/cors"
 )
 
 const (
 	healthCheckUrl = "/health_check"
 )
 
+// Deprecated: WithHttpCORS is deprecated
+// use cors middleware in web service by yourself
 func WithHttpCORS() ServiceOption {
 	return func(cs *CoresService) {
-		cs.httpCors = true
-		innerlog.Logger.Debugf("Http enable CORS")
+		cs.httpCors = false
 	}
+}
+
+type swaggerOption struct {
+	prefix string
+}
+
+type swaggerOptionFn func(*swaggerOption)
+
+func WithOpenapiPrefix(prefix string) swaggerOptionFn {
+	return func(so *swaggerOption) {
+		if prefix == "/" {
+			innerlog.Logger.PanicError(fmt.Errorf("swagger openapi url not allow '/'"))
+		}
+
+		if !strings.HasPrefix(prefix, "/") {
+			prefix = "/" + prefix
+		}
+
+		prefix = strings.TrimSuffix(prefix, "/")
+		so.prefix = prefix
+	}
+}
+
+func WithSwagger(handler http.Handler, opts ...swaggerOptionFn) ServiceOption {
+	so := new(swaggerOption)
+	for _, opt := range opts {
+		opt(so)
+	}
+
+	if so.prefix == "" {
+		so.prefix = "/docs"
+	}
+
+	return func(cs *CoresService) {
+		cs.httpMux.Handle(so.prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, so.prefix+"/index.html", http.StatusFound)
+		}))
+		cs.httpMux.Handle(so.prefix+"/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler.ServeHTTP(w, r)
+		}))
+	}
+}
+
+type httpHandlerWithName interface {
+	http.Handler
+	Name() string
 }
 
 func WithHttpHandler(pattern string, handler http.Handler) ServiceOption {
@@ -41,8 +89,25 @@ func WithHttpHandler(pattern string, handler http.Handler) ServiceOption {
 			pattern = pattern + "/"
 		}
 
-		cs.httpPatterns = append(cs.httpPatterns, pattern)
-		innerlog.Logger.Debugf("Registered http endpoint. path=%s\n", pattern)
+		var handlerName string
+		namedHandler, ok := handler.(httpHandlerWithName)
+		if ok {
+			handlerName = namedHandler.Name()
+		} else {
+			handlerName = logging.GetStructName(handler)
+		}
+
+		cs.httpPattern = append(cs.httpPattern, httpPattern{
+			pattern: pattern,
+			name:    handlerName,
+		})
+
+		innerlog.Logger.Debugw(
+			context.TODO(), "Registered http endpoint.",
+			logging.String("pattern", pattern),
+			logging.String("name", handlerName),
+		)
+
 		cs.httpMux.Handle(pattern, http.StripPrefix(strings.TrimSuffix(pattern, "/"), handler))
 	}
 }
@@ -57,17 +122,8 @@ func (c *CoresService) listenHttp(lst net.Listener) mountFn {
 		fn: func(ctx context.Context) (err error) {
 			c.httpMux.Handle(healthCheckUrl, http.HandlerFunc(healthCheckApi))
 
-			handler := c.httpHandler
-			if c.httpCors {
-				handler = cors.AllowAll().Handler(handler)
-			}
-
-			if c.usePrometheus {
-				handler = c.monitorHttp(handler)
-			}
-
 			c.httpServer = &http.Server{
-				Handler:           handler,
+				Handler:           c.httpHandler,
 				ReadTimeout:       c.httpServerConfig.ReadTimeout,
 				ReadHeaderTimeout: c.httpServerConfig.ReadHeaderTimeout,
 				WriteTimeout:      c.httpServerConfig.WriteTimeout,
@@ -126,9 +182,3 @@ var (
 		MaxHeaderBytes:    1 << 20, // 1 MB,
 	}
 )
-
-func WithHttpServerConfig(config *HttpServerConfig) ServiceOption {
-	return func(cs *CoresService) {
-		cs.httpServerConfig = config
-	}
-}

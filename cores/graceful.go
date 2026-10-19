@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/pkg/errors"
@@ -21,8 +20,7 @@ import (
 
 func (c *CoresService) gracefulKill() mountFn {
 	return mountFn{
-		name:    "GracefulKill",
-		maxWait: time.Second * 3,
+		name: "GracefulKill",
 		fn: func(ctx context.Context) error {
 			ch := make(chan os.Signal, 1)
 			signal.Notify(
@@ -37,15 +35,23 @@ func (c *CoresService) gracefulKill() mountFn {
 			select {
 			case sg := <-ch:
 				innerlog.Logger.Infoc(ctx, "Graceful stopping service... Signal: %s", sg)
-
 				if c.httpServer != nil {
-					_ = c.httpServer.Shutdown(ctx)
-					innerlog.Logger.Infoc(ctx, "Graceful stopped http server")
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultMaxWait)
+					defer cancel()
+					if prettyErrorCheck(ctx, c.httpServer.Shutdown(shutdownCtx), "Http server shutdown") {
+						innerlog.Logger.Infoc(ctx, "Graceful stopped http server")
+					}
 				}
 
 				if c.listener != nil {
 					_ = c.listener.Close()
 					innerlog.Logger.Infoc(ctx, "Graceful stopped listener")
+				}
+
+				if c.traceCloser != nil {
+					if prettyErrorCheck(ctx, c.traceCloser.Close(), "Trace closer close") {
+						innerlog.Logger.Infoc(ctx, "Graceful stopped tracing")
+					}
 				}
 
 				c.cancel()

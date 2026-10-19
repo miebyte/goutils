@@ -68,7 +68,6 @@ func main() {
 
 	srv := cores.NewCores(
 		cores.WithPprof(),
-		cores.WithPrometheus(),
 		cores.WithHttpHandler("/", app),
 		cores.WithWorker(func(ctx context.Context) error {
 			ticket := time.NewTicker(time.Second * 3)

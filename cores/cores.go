@@ -10,17 +10,21 @@ package cores
 
 import (
 	"context"
-	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
 	"github.com/pkg/errors"
+	"github.com/robfig/cron/v3"
 	"golang.org/x/sync/errgroup"
+
+	_ "go.uber.org/automaxprocs"
 )
 
 type listenEntry interface {
@@ -28,37 +32,58 @@ type listenEntry interface {
 }
 
 type mountFn struct {
+	name        string
+	maxWait     time.Duration
+	waitAllDone bool
+	fn          func(ctx context.Context) error
+}
+
+type httpPattern struct {
+	pattern string
 	name    string
-	maxWait time.Duration
-	fn      func(ctx context.Context) error
 }
 
 type CoresService struct {
 	ctx    context.Context
 	cancel func()
 
-	serviceName string
-	tags        []string
+	serviceAlias string
 
-	listenAddr string
-	listener   net.Listener
-
+	listenAddr       string
+	listenPort       int
+	listener         net.Listener
 	httpMux          *http.ServeMux
-	httpServerConfig *HttpServerConfig
-	httpPatterns     []string
+	httpPattern      []httpPattern
 	httpHandler      http.Handler
 	httpCors         bool
+	httpServerConfig *HttpServerConfig
 	httpServer       *http.Server
 
-	workers     []Worker
-	mountFns    []mountFn
-	waitAllDone bool
+	workers       []Worker
+	mountFns      []mountFn
+	innerMountFns []mountFn
+	waitAllDone   bool
 
+	sentryMonitor bool
+	useKafkaLog   bool
 	usePprof      bool
-	usePrometheus bool
+
+	useTracing  bool
+	traceCloser io.Closer
+
+	usePrometheus             bool
+	prometheusMonitorDuration time.Duration
+
+	cron *cron.Cron
 }
 
 type ServiceOption func(*CoresService)
+
+func WithServiceAlias(name string) ServiceOption {
+	return func(cs *CoresService) {
+		cs.serviceAlias = name
+	}
+}
 
 func WithDefaultMaxWait(wait time.Duration) ServiceOption {
 	return func(_ *CoresService) {
@@ -72,6 +97,12 @@ func WithWaitAllDone() ServiceOption {
 	}
 }
 
+func WithHttpServerConfig(config *HttpServerConfig) ServiceOption {
+	return func(cs *CoresService) {
+		cs.httpServerConfig = config
+	}
+}
+
 func NewCores(opts ...ServiceOption) *CoresService {
 	ctx, cancel := context.WithCancel(context.TODO())
 
@@ -80,11 +111,11 @@ func NewCores(opts ...ServiceOption) *CoresService {
 		cancel:           cancel,
 		httpMux:          http.NewServeMux(),
 		httpServerConfig: defaultHttpServerConfig,
-		httpPatterns:     make([]string, 0),
+		httpPattern:      make([]httpPattern, 0),
 		mountFns:         make([]mountFn, 0),
+		innerMountFns:    make([]mountFn, 0),
 	}
 	cs.httpHandler = cs.httpMux
-
 	for _, opt := range opts {
 		opt(cs)
 	}
@@ -92,60 +123,80 @@ func NewCores(opts ...ServiceOption) *CoresService {
 	return cs
 }
 
+func (c *CoresService) justWorker() bool {
+	return c.listener == nil
+}
+
 func (c *CoresService) serve() error {
-	c.injectServiceName()
+	if c.serviceAlias != "" {
+		c.ctx = logging.With(c.ctx, "Alias", c.serviceAlias)
+	}
 
-	c.mountFns = []mountFn{c.gracefulKill()}
+	if share.ServiceName() != "" {
+		c.ctx = logging.With(c.ctx, "Service", share.ServiceName())
+	}
 
-	if c.listener == nil {
+	c.innerMountFns = append(c.innerMountFns, c.gracefulKill())
+
+	if c.justWorker() {
 		return c.startServer()
 	}
 
-	c.mountFns = append(c.mountFns, c.listenHttp(c.listener))
+	c.setupPprof()
+
+	c.innerMountFns = append(c.innerMountFns, c.listenHttp(c.listener))
 
 	return c.startServer()
 }
 
-func (c *CoresService) injectServiceName() {
-	if share.ServiceName() != "" {
-		c.serviceName = share.ServiceName()
-		c.ctx = logging.With(c.ctx, "Service", c.serviceName)
-	}
-
-	if share.Tag() != "" {
-		c.tags = append(c.tags, share.Tag())
-	}
-
-	if len(c.tags) == 0 {
-		c.tags = append(c.tags, "dev")
-	}
-}
-
 func (c *CoresService) startServer() error {
 	c.wrapWorker()
-	c.setupPprof()
-	c.setupPrometheus()
 
 	c.welcome()
 	return c.runMountFn()
 }
 
 func (c *CoresService) runMountFn() error {
-	grp, ctx := errgroup.WithContext(c.ctx)
+	runFn := func(mountFns []mountFn) *errgroup.Group {
+		grp, ctx := errgroup.WithContext(c.ctx)
+		for _, mountFn := range mountFns {
+			grp.Go(func() (err error) {
+				cctx := logging.With(ctx, "Worker", mountFn.name)
+				err = waitContext(cctx, mountFn.maxWait, mountFn.waitAllDone, mountFn.fn)
+				if err != nil {
+					return errors.Wrap(err, "waitContext")
+				}
 
-	for _, mount := range c.mountFns {
-		mf := mount
-		grp.Go(func() (err error) {
-			cctx := logging.With(ctx, "Worker", mf.name)
-			err = c.waitContext(cctx, mf.maxWait, mf.fn)
-			if err != nil {
-				return errors.Wrap(err, "waitContext")
-			}
-			return nil
-		})
+				innerlog.Logger.Debugc(cctx, "worker run done")
+				return nil
+			})
+
+			innerlog.Logger.Debugc(ctx, "worker(%s) start", mountFn.name)
+		}
+
+		return grp
 	}
 
-	return grp.Wait()
+	workerGroup := runFn(c.mountFns)
+	innerGroup := runFn(c.innerMountFns)
+
+	workerErr := workerGroup.Wait()
+	innerlog.Logger.Infoc(c.ctx, "all user worker run done")
+
+	// 所有自定义 worker 运行完成
+	// 触发 cores 结束
+	if c.justWorker() {
+		c.cancel()
+	}
+
+	// 等待所有内置 worker 运行完成
+	innerErr := innerGroup.Wait()
+
+	if workerErr == nil && innerErr == nil {
+		return nil
+	}
+
+	return multierror.Append(workerErr, innerErr)
 }
 
 func Run(srv *CoresService) error {
@@ -167,13 +218,14 @@ func Start[T listenEntry](srv *CoresService, addr T) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to start listener")
 	}
-	srv.listener = listener
-	srv.listenAddr = listener.Addr().String()
 
-	lstAddr, ok := listener.Addr().(*net.TCPAddr)
-	if ok && lstAddr.IP.IsUnspecified() {
-		srv.listenAddr = fmt.Sprintf("127.0.0.1:%v", lstAddr.Port)
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+	portInt, err := strconv.Atoi(port)
+	if err == nil {
+		srv.listenPort = portInt
 	}
 
+	srv.listener = listener
+	srv.listenAddr = listener.Addr().String()
 	return srv.serve()
 }

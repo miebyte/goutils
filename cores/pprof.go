@@ -42,6 +42,7 @@ func (cs *CoresService) setupPprof() {
 	cs.httpMux.HandleFunc(pprofUrl+"symbol", pprof.Symbol)
 	cs.httpMux.HandleFunc(pprofUrl+"trace", pprof.Trace)
 	cs.httpMux.Handle(pprofUrl+"goroutine", pprof.Handler("goroutine"))
+	cs.httpMux.Handle(pprofUrl+"goroutineleak", pprof.Handler("goroutineleak"))
 	cs.httpMux.Handle(pprofUrl+"heap", pprof.Handler("heap"))
 	cs.httpMux.Handle(pprofUrl+"threadcreate", pprof.Handler("threadcreate"))
 	cs.httpMux.Handle(pprofUrl+"block", pprof.Handler("block"))

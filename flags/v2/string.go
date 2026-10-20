@@ -6,7 +6,7 @@
 //
 // (c) 2024 Example Corp. All rights reserved.
 
-package superflags
+package flags
 
 import "github.com/spf13/pflag"
 

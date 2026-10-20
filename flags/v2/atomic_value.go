@@ -1,4 +1,4 @@
-package superflags
+package flags
 
 import "sync/atomic"
 

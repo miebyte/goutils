@@ -114,7 +114,6 @@ func Struct[T any](key string, defaultVal T, usage string, opts ...structOptionF
 
 // decodeStruct 将一个 value 解析为目标类型 T。
 func decodeStruct[T any](key string, value any) (T, error) {
-	var zero T
 	st := reflect.TypeFor[T]()
 	next := reflect.New(st.Elem()).Convert(st).Interface().(T)
 	var raw json.RawMessage
@@ -126,13 +125,13 @@ func decodeStruct[T any](key string, value any) (T, error) {
 	default:
 		// 缺少配置时 get 会返回默认对象，复制到 next 后再执行校验。
 		if v, ok := value.(T); ok && reflect.ValueOf(v).IsNil() {
-			return zero, fmt.Errorf("key %q is nil", key)
+			return next, nil
 		}
 
 		var err error
 		raw, err = json.Marshal(value)
 		if err != nil {
-			return zero, fmt.Errorf("key %q marshal failed: %w", key, err)
+			return next, fmt.Errorf("key %q marshal failed: %w", key, err)
 		}
 		if bytes.Equal(raw, []byte("null")) {
 			raw = nil
@@ -141,17 +140,17 @@ func decodeStruct[T any](key string, value any) (T, error) {
 
 	if raw != nil {
 		if !json.Valid(raw) {
-			return zero, fmt.Errorf("key %q is not a valid JSON object", key)
+			return next, fmt.Errorf("key %q is not a valid JSON object", key)
 		}
 
 		if err := json.Unmarshal(raw, next); err != nil {
-			return zero, fmt.Errorf("key %q unmarshal failed: %w", key, err)
+			return next, fmt.Errorf("key %q unmarshal failed: %w", key, err)
 		}
 	}
 
 	err := checkStruct(next)
 	if err != nil {
-		return zero, fmt.Errorf("key %q check failed: %w", key, err)
+		return next, fmt.Errorf("key %q check failed: %w", key, err)
 	}
 
 	return next, nil

@@ -43,10 +43,10 @@ type RemoteConfigOption struct {
 	provider    ConfigProvider
 }
 
-// WithRemoteConfig 允许已声明的 Struct key 在 Parse 阶段统一从远程读取 JSON，默认使用 ZK。
+// WithRemoteConfig 允许已声明的 Struct key 在 Parse 阶段统一从 Consul KV 读取 JSON。
 // 普通 Flag 仍只使用命令行参数和默认值，不读取远程配置。
-// ZK 默认读取 {prefix}/{serviceName}/{key}，service 使用 {prefix}/union/service。
-// Nacos 默认读取 {projectName}.{key}。Getter 和 Struct Parser 只读取缓存。
+// 默认使用 SDK 默认配置及 CONSUL_* 环境变量，KV 路径直接使用 Struct key。
+// WithRemoteConsulProvider 可覆盖连接和 key 前缀。Getter 和 Struct Parser 只读取缓存。
 // 显式 --configFile 优先使用本地文件，Struct 的远程选项在本地模式下不生效。
 func WithRemoteConfig(opts ...RemoteConfigOptionFunc) OptionFunc {
 	return func(o *Option) {
@@ -71,7 +71,7 @@ func WithConfigWatch() OptionFunc {
 	}
 }
 
-// WithSuperConfUp 为 superconf.json 和 supernacos.json 添加一个向上回退的候选目录。
+// WithSuperConfUp 为远程连接引导配置添加一个向上回退的候选目录；Consul 使用 SDK 配置，不受影响。
 // 每份配置默认优先读取当前工作目录；仅文件不存在时，才尝试向上回退 n 层的目录，不逐层查找。
 func WithSuperConfUp(n int) OptionFunc {
 	return func(o *Option) {

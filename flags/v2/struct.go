@@ -25,7 +25,7 @@ type (
 
 func (f structOptionFunc[T]) applyStruct(o *structOption[T]) { f(o) }
 
-// WithConfigPath 指定完整 ZK 路径或完整 Nacos Data ID。
+// WithConfigPath 指定完整的远程配置路径；Consul 使用完整 KV key，不再补前缀。
 func WithConfigPath[T any](path string) structOptionFunc[T] {
 	return func(o *structOption[T]) { o.path = path }
 }

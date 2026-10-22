@@ -5,55 +5,50 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/miebyte/goutils/flags/v2/provider"
+	"github.com/miebyte/goutils/internal/share"
+
 	consulapi "github.com/hashicorp/consul/api"
 	consulwatch "github.com/hashicorp/consul/api/watch"
-	"github.com/miebyte/goutils/flags/v2/provider"
+)
+
+const (
+	defaultPrefix = "/configs"
 )
 
 type ConsulProvider struct {
-	client     *consulapi.Client
-	prefix     string
-	httpClient *http.Client
-	done       chan struct{}
-	doneOnce   sync.Once
-	closeOnce  sync.Once
-	mu         sync.Mutex
-	plans      []*consulwatch.Plan
-	watchers   sync.WaitGroup
+	client    *consulapi.Client
+	prefix    string
+	done      chan struct{}
+	doneOnce  sync.Once
+	closeOnce sync.Once
+	mu        sync.Mutex
+	plans     []*consulwatch.Plan
+	watchers  sync.WaitGroup
 }
 
 var _ provider.ConfigProvider = (*ConsulProvider)(nil)
 
-func NewConsulClient(config *consulapi.Config, prefix string) (*ConsulProvider, error) {
-	if config == nil {
-		config = consulapi.DefaultConfig()
-	}
+func NewConsulClient() (*ConsulProvider, error) {
+	cfg := consulapi.DefaultConfig()
+	prefix := path.Join(defaultPrefix, share.GetServiceName())
 
-	// SDK 会补全配置，使用副本避免修改调用方的配置。
-	cfg := *config
-	ownClient := cfg.HttpClient == nil
-	if ownClient && cfg.Transport != nil {
-		cfg.Transport = cfg.Transport.Clone()
-	}
-	client, err := consulapi.NewClient(&cfg)
+	client, err := consulapi.NewClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create consul client: %w", err)
 	}
 
 	p := &ConsulProvider{
 		client: client,
-		prefix: strings.Trim(prefix, "/"),
+		prefix: strings.TrimRight(prefix, "/"),
 	}
 
-	if ownClient {
-		p.httpClient = cfg.HttpClient
-	}
 	return p, nil
 }
 
@@ -191,9 +186,6 @@ func (p *ConsulProvider) Close() error {
 			plan.Stop()
 		}
 		p.watchers.Wait()
-		if p.httpClient != nil {
-			p.httpClient.CloseIdleConnections()
-		}
 	})
 	return nil
 }

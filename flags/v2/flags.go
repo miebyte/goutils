@@ -45,7 +45,7 @@ type RemoteConfigOption struct {
 
 // WithRemoteConfig 允许已声明的 Struct key 在 Parse 阶段统一从 Consul KV 读取 JSON。
 // 普通 Flag 仍只使用命令行参数和默认值，不读取远程配置。
-// 默认使用 SDK 默认配置及 CONSUL_* 环境变量，KV 路径直接使用 Struct key。
+// 默认使用 SDK 默认配置及 CONSUL_* 环境变量，KV 路径为 /configs/{serviceName}/{key}。
 // WithRemoteConsulProvider 可覆盖连接和 key 前缀。Getter 和 Struct Parser 只读取缓存。
 // 显式 --configFile 优先使用本地文件，Struct 的远程选项在本地模式下不生效。
 func WithRemoteConfig(opts ...RemoteConfigOptionFunc) OptionFunc {

@@ -109,25 +109,18 @@ func (sf *SuperFlags) BindNormalKey(key string) {
 	sf.normalKeys = append(sf.normalKeys, key)
 }
 
-func (sf *SuperFlags) BindStructKey(key string, configProvider ...provider.ConfigProvider) {
-	var source provider.ConfigProvider
-	if len(configProvider) > 0 {
-		source = configProvider[0]
-	}
-	sf.bindStructKey(key, "", source, nil)
-}
-
-func (sf *SuperFlags) bindStructKey(key, path string, source provider.ConfigProvider, confRefresh func(json.RawMessage) error) {
+func (sf *SuperFlags) BindStructKey(opt structOption, confRefresh func(json.RawMessage) error) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if _, exists := sf.structKeyReaders[key]; exists {
-		innerlog.Logger.PanicError(fmt.Errorf("Struct %q has already been declared", key))
+	if _, exists := sf.structKeyReaders[opt.key]; exists {
+		innerlog.Logger.PanicError(fmt.Errorf("Struct %q has already been declared", opt.key))
 	}
 
-	sf.structKeyReaders[key] = keyReader{
-		key:         key,
-		path:        path,
-		provider:    source,
+	sf.structKeyReaders[opt.key] = keyReader{
+		key:         opt.key,
+		path:        opt.path,
+		isFullPath:  opt.isFullPath,
+		provider:    opt.provider,
 		isStruct:    true,
 		confRefresh: confRefresh,
 	}

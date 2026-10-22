@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sync"
 
-	consulapi "github.com/hashicorp/consul/api"
 	"github.com/miebyte/goutils/flags/v2/internal/config"
 	"github.com/miebyte/goutils/flags/v2/internal/consul"
 	"github.com/miebyte/goutils/flags/v2/internal/local"
@@ -17,18 +16,18 @@ type ConfigProvider = provider.ConfigProvider
 type ConfigWatcher = provider.ConfigWatcher
 type Event = provider.Event
 
-// NewConsulProvider 延迟创建 Consul 客户端。config 为 nil 时使用 SDK 默认配置及 CONSUL_* 环境变量。
-// 默认 KV 路径为 {prefix}/{key}；prefix 为空时直接使用 key。
-func NewConsulProvider(config *consulapi.Config, prefix string) ConfigProvider {
+func NewConsulProvider() ConfigProvider {
 	return &remoteProvider{
-		newClient: func() (ConfigProvider, error) { return consul.NewConsulClient(config, prefix) },
+		newClient: func() (ConfigProvider, error) {
+			return consul.NewConsulClient()
+		},
 	}
 }
 
-// WithRemoteConsulProvider 覆盖 WithRemoteConfig 使用的 Consul 连接和 KV key 前缀。
-func WithRemoteConsulProvider(config *consulapi.Config, prefix string) RemoteConfigOptionFunc {
+// WithRemoteConsulProvider 覆盖 Consul 连接和根前缀，路径仍会追加当前服务名和 key。
+func WithRemoteConsulProvider() RemoteConfigOptionFunc {
 	return func(o *RemoteConfigOption) {
-		o.provider = NewConsulProvider(config, prefix)
+		o.provider = NewConsulProvider()
 	}
 }
 
@@ -101,7 +100,7 @@ func (p *remoteProvider) Close() error {
 
 func configPath(source ConfigProvider, key, path string) (string, error) {
 	if path != "" {
-		return path, nil
+		key = path
 	}
 
 	return source.Path(key), nil
@@ -120,5 +119,5 @@ func getConfigProvider(opt *Option) (ConfigProvider, error) {
 		return opt.RemoteOption.provider, nil
 	}
 
-	return NewConsulProvider(nil, ""), nil
+	return NewConsulProvider(), nil
 }

@@ -8,8 +8,10 @@ import (
 )
 
 type keyReader struct {
-	key         string
-	path        string
+	key        string
+	isFullPath bool
+	path       string
+
 	provider    ConfigProvider
 	isStruct    bool // 只有 Struct 的配置要求 JSON，普通 Flag 可以是纯文本。
 	confRefresh func(json.RawMessage) error
@@ -34,6 +36,10 @@ func (k keyReader) resolve(defaultProvider ConfigProvider) (ConfigProvider, stri
 	source := defaultProvider
 	if k.provider != nil {
 		source = k.provider
+	}
+
+	if k.isFullPath {
+		return source, k.path, nil
 	}
 
 	path, err := configPath(source, k.key, k.path)

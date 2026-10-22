@@ -11,30 +11,46 @@ import (
 	"github.com/miebyte/goutils/logging"
 )
 
-type structOption[T any] struct {
-	path          string
+type structOption struct {
+	key string
+
+	isFullPath bool
+	path       string
+
 	provider      ConfigProvider
-	configRefresh ConfigRefreshFunc[T]
+	configRefresh any // 保存 ConfigRefreshFunc[T]，由 Struct[T] 校验并提取。
 }
 
-type (
-	structOptionFunc[T any] func(*structOption[T])
+type structOptionFunc func(*structOption)
 
-	ConfigRefreshFunc[T any] func(T) error
-)
+type ConfigRefreshFunc[T any] func(T) error
 
-func (f structOptionFunc[T]) applyStruct(o *structOption[T]) { f(o) }
+func (f structOptionFunc) applyStruct(o *structOption) { f(o) }
 
-// WithConfigPath 指定完整的远程配置路径；Consul 使用完整 KV key，不再补前缀。
-func WithConfigPath[T any](path string) structOptionFunc[T] {
-	return func(o *structOption[T]) { o.path = path }
+// WithConfigPath 指定当前 key 需要读取的配置后缀。
+// 对于 Consul:
+//
+// path 无需包含节点前缀，例如 "/configs/{serviceName}/{xxx}" 只需传入 "{xxx}"。
+func WithConfigPath(path string) structOptionFunc {
+	return func(o *structOption) {
+		o.path = path
+		o.isFullPath = false
+	}
+}
+
+// WithFullConfigPath 指定完整配置路径，跳过根前缀和当前服务名。
+func WithFullConfigPath(path string) structOptionFunc {
+	return func(o *structOption) {
+		o.path = path
+		o.isFullPath = true
+	}
 }
 
 // WithConfigRefresh 设置热更新回调，传入解析、补默认值并校验后的只读快照。
 // 回调在新快照发布后执行，首次 Parser 初始化不调用；未设置回调时仅更新快照。
 // 回调返回的错误由监听器记录，不会回滚已发布的快照。
-func WithConfigRefresh[T any](fn ConfigRefreshFunc[T]) structOptionFunc[T] {
-	return func(o *structOption[T]) { o.configRefresh = fn }
+func WithConfigRefresh[T any](fn ConfigRefreshFunc[T]) structOptionFunc {
+	return func(o *structOption) { o.configRefresh = fn }
 }
 
 type HasDefault interface {
@@ -52,22 +68,28 @@ type StructParser[T any] func() (*AtomicValue[T], error)
 // 声明阶段只登记 key 和选项；Parse 读取配置后，返回的 Parser 只解析缓存并发布初值。
 // defaultVal 仅在首次读取缺少配置时使用，按 JSON 语义复制，不与已有配置合并。
 // 每次解析创建新对象，执行 SetDefault、Validate，成功后才发布。
-func Struct[T any](key string, defaultVal T, usage string, opts ...structOptionFunc[T]) StructParser[T] {
+func Struct[T any](key string, defaultVal T, usage string, opts ...structOptionFunc) StructParser[T] {
 	st := reflect.TypeFor[T]()
 	if st.Kind() != reflect.Pointer || (st.Elem().Kind() != reflect.Struct && st.Elem().Kind() != reflect.Map) {
-		logging.PanicError(fmt.Errorf("superflags.Struct[%s] must be a pointer to a struct or map", key))
+		logging.PanicError(fmt.Errorf("flags.Struct[%s] must be a pointer to a struct or map", key))
 	}
 	if strings.TrimSpace(key) == "" {
-		logging.PanicError(fmt.Errorf("superflags.Struct key must not be empty"))
+		logging.PanicError(fmt.Errorf("flags.Struct key must not be empty"))
 	}
 
 	var (
 		mu  sync.Mutex
-		opt structOption[T]
+		opt structOption
 	)
 
 	for _, option := range opts {
 		option.applyStruct(&opt)
+	}
+	opt.key = key
+
+	configRefresh, ok := opt.configRefresh.(ConfigRefreshFunc[T])
+	if opt.configRefresh != nil && !ok {
+		logging.PanicError(fmt.Errorf("Struct %q refresh callback must be %T, got %T", key, configRefresh, opt.configRefresh))
 	}
 	owner := sf
 
@@ -75,7 +97,7 @@ func Struct[T any](key string, defaultVal T, usage string, opts ...structOptionF
 	value := new(AtomicValue[T])
 
 	owner.SetDefault(key, defaultVal)
-	owner.bindStructKey(key, opt.path, opt.provider, func(raw json.RawMessage) error {
+	owner.BindStructKey(opt, func(raw json.RawMessage) error {
 		mu.Lock()
 		defer mu.Unlock()
 
@@ -85,8 +107,8 @@ func Struct[T any](key string, defaultVal T, usage string, opts ...structOptionF
 		}
 		value.store(next)
 
-		if opt.configRefresh != nil {
-			return opt.configRefresh(next)
+		if configRefresh != nil {
+			return configRefresh(next)
 		}
 
 		return nil

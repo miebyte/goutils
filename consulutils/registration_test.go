@@ -132,7 +132,7 @@ func runRegistration(t *testing.T, registration *Registration) context.CancelFun
 func TestRegistrationRetriesAndRestoresMissingService(t *testing.T) {
 	agent := &registrationAgent{registerFailures: 1}
 	config := localRegistrationConfig(t, registrationClient(t, agent))
-	registration, err := NewRegistration("orders", 8080, config, "[::]:6060")
+	registration, err := NewRegistration("orders", ":8080", "[::]:6060", config)
 	require.NoError(t, err)
 	stop := runRegistration(t, registration)
 	require.Eventually(t, func() bool {
@@ -166,7 +166,7 @@ func TestRegistrationLogsInitialConfirmationAndRecovery(t *testing.T) {
 	t.Cleanup(func() { innerlog.Logger = originalLogger })
 	agent := &registrationAgent{}
 	config := localRegistrationConfig(t, registrationClient(t, agent))
-	registration, err := NewRegistration("orders", 8080, config, ":6060")
+	registration, err := NewRegistration("orders", ":8080", ":6060", config)
 	require.NoError(t, err)
 	stop := runRegistration(t, registration)
 	require.Eventually(t, func() bool {
@@ -193,7 +193,7 @@ func TestRegistrationUpdatesExistingRecordOnlyAtStartup(t *testing.T) {
 	agent := &registrationAgent{}
 	config := localRegistrationConfig(t, registrationClient(t, agent))
 	config.ServiceAddress = "new.example"
-	registration, err := NewRegistration("orders", 8080, config, ":6060")
+	registration, err := NewRegistration("orders", ":8080", ":6060", config)
 	require.NoError(t, err)
 	agent.service = &api.AgentServiceRegistration{ID: registration.service.ID, Address: "old.example"}
 	require.NoError(t, registration.ensureRegistered(context.Background()))
@@ -215,7 +215,7 @@ func TestRegistrationConfirmsUnknownRegisterResultWithoutRepeatingPut(t *testing
 		}
 	}))
 	config := localRegistrationConfig(t, client)
-	registration, err := NewRegistration("orders", 8080, config, ":6060")
+	registration, err := NewRegistration("orders", ":8080", ":6060", config)
 	require.NoError(t, err)
 	stop := runRegistration(t, registration)
 	require.Eventually(t, func() bool {
@@ -231,9 +231,9 @@ func TestRegistrationConfirmsUnknownRegisterResultWithoutRepeatingPut(t *testing
 
 func TestRegistrationAddressesAndInstanceIDs(t *testing.T) {
 	config := localRegistrationConfig(t, registrationClient(t, &registrationAgent{}))
-	first, err := NewRegistration("orders", 8080, config, "127.0.0.1:6060")
+	first, err := NewRegistration("orders", ":8080", "127.0.0.1:6060", config)
 	require.NoError(t, err)
-	second, err := NewRegistration("orders", 8080, config, "127.0.0.1:6060")
+	second, err := NewRegistration("orders", ":8080", "127.0.0.1:6060", config)
 	require.NoError(t, err)
 	require.NotEqual(t, first.service.ID, second.service.ID)
 	require.Equal(t, "127.0.0.1", first.service.Address)
@@ -246,33 +246,31 @@ func TestRegistrationAddressesAndInstanceIDs(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "shop")
 	t.Setenv("POD_UID", "pod-one")
 	t.Setenv("POD_IP", "10.0.0.8")
-	first, err = NewRegistration("orders", 8080, config, "[::]:6060")
+	first, err = NewRegistration("orders", ":8080", "[::]:6060", config)
 	require.NoError(t, err)
 	require.Equal(t, "orders", first.service.Name)
 	require.Equal(t, "orders.shop.svc.cluster.local", first.service.Address)
 	require.Equal(t, 8080, first.service.Port)
-	config.K8sServiceName = "orders-http"
-	config.ClusterDomain = "internal.example"
 	config.Meta = map[string]string{"namespace": "wrong", "pod_uid": "wrong", "team": "shop"}
-	first, err = NewRegistration("orders", 80, config, "[::]:16060")
+	first, err = NewRegistration("orders", ":80", "[::]:16060", config)
 	require.NoError(t, err)
-	require.Equal(t, "orders-http.shop.svc.internal.example", first.service.Address)
+	require.Equal(t, "orders.shop.svc.cluster.local", first.service.Address)
 	require.Equal(t, 80, first.service.Port)
 	require.Equal(t, "http://10.0.0.8:16060/ready", first.service.Check.HTTP)
 	require.Equal(t, map[string]string{"namespace": "shop", "pod_uid": "pod-one", "team": "shop"}, first.service.Meta)
 	require.Equal(t, "wrong", config.Meta["namespace"], "不能修改调用方的配置映射")
-	second, err = NewRegistration("orders", 80, config, "[::]:16060")
+	second, err = NewRegistration("orders", ":80", "[::]:16060", config)
 	require.NoError(t, err)
 	require.Equal(t, first.service.ID, second.service.ID)
 	t.Setenv("POD_UID", "pod-two")
-	second, err = NewRegistration("orders", 80, config, "[::]:16060")
+	second, err = NewRegistration("orders", ":80", "[::]:16060", config)
 	require.NoError(t, err)
 	require.NotEqual(t, first.service.ID, second.service.ID)
 	require.Equal(t, first.service.Address, second.service.Address)
 
 	config.ServiceAddress = "entry.example"
-	config.CheckHost = "2001:db8::1"
-	first, err = NewRegistration("orders", 80, config, ":16060")
+	t.Setenv("POD_IP", "2001:db8::1")
+	first, err = NewRegistration("orders", ":80", ":16060", config)
 	require.NoError(t, err)
 	require.Equal(t, "entry.example", first.service.Address)
 	require.Equal(t, "http://[2001:db8::1]:16060/ready", first.service.Check.HTTP)
@@ -281,17 +279,17 @@ func TestRegistrationAddressesAndInstanceIDs(t *testing.T) {
 func TestRegistrationRequiresServiceIdentity(t *testing.T) {
 	config := localRegistrationConfig(t, registrationClient(t, &registrationAgent{}))
 	for _, test := range []struct {
-		name        string
-		serviceName string
-		servicePort int
+		name            string
+		serviceName     string
+		businessAddress string
 	}{
-		{name: "missing name", servicePort: 8080},
-		{name: "invalid name", serviceName: "orders/api", servicePort: 8080},
-		{name: "missing port", serviceName: "orders"},
-		{name: "invalid port", serviceName: "orders", servicePort: 65536},
+		{name: "missing name", businessAddress: ":8080"},
+		{name: "invalid name", serviceName: "orders/api", businessAddress: ":8080"},
+		{name: "missing port", serviceName: "orders", businessAddress: ":0"},
+		{name: "invalid port", serviceName: "orders", businessAddress: ":65536"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := NewRegistration(test.serviceName, test.servicePort, config, ":6060")
+			_, err := NewRegistration(test.serviceName, test.businessAddress, ":6060", config)
 			require.Error(t, err)
 		})
 	}
@@ -305,7 +303,7 @@ func TestRegistrationRejectsIncompleteKubernetesIdentity(t *testing.T) {
 			t.Setenv("POD_UID", "pod-one")
 			t.Setenv("POD_IP", "10.0.0.8")
 			t.Setenv(missing, "")
-			_, err := NewRegistration("orders", 8080, config, ":6060")
+			_, err := NewRegistration("orders", ":8080", ":6060", config)
 			require.ErrorContains(t, err, "must all be set")
 		})
 	}
@@ -322,7 +320,7 @@ func TestRegistrationCancelsInflightRequest(t *testing.T) {
 	}))
 	config := localRegistrationConfig(t, client)
 	config.RequestTimeout = time.Minute
-	registration, err := NewRegistration("orders", 8080, config, ":6060")
+	registration, err := NewRegistration("orders", ":8080", ":6060", config)
 	require.NoError(t, err)
 	stop := runRegistration(t, registration)
 	select {
@@ -351,7 +349,7 @@ func TestRegistrationRequestTimeoutRetries(t *testing.T) {
 	}))
 	config := localRegistrationConfig(t, client)
 	config.RequestTimeout = 10 * time.Millisecond
-	registration, err := NewRegistration("orders", 8080, config, ":6060")
+	registration, err := NewRegistration("orders", ":8080", ":6060", config)
 	require.NoError(t, err)
 	runRegistration(t, registration)
 	require.Eventually(t, func() bool {
@@ -380,7 +378,7 @@ func TestRegistrationCleansUpUnknownRegisterResult(t *testing.T) {
 	}))
 	config := localRegistrationConfig(t, client)
 	config.RequestTimeout = time.Minute
-	registration, err := NewRegistration("orders", 8080, config, ":6060")
+	registration, err := NewRegistration("orders", ":8080", ":6060", config)
 	require.NoError(t, err)
 	stop := runRegistration(t, registration)
 	select {
@@ -401,7 +399,7 @@ func TestRegistrationCleansUpUnknownRegisterResult(t *testing.T) {
 func TestRegistrationDeregisterHonorsCancellation(t *testing.T) {
 	agent := &registrationAgent{}
 	config := localRegistrationConfig(t, registrationClient(t, agent))
-	registration, err := NewRegistration("orders", 8080, config, ":6060")
+	registration, err := NewRegistration("orders", ":8080", ":6060", config)
 	require.NoError(t, err)
 	require.NoError(t, registration.ensureRegistered(context.Background()))
 	ctx, cancel := context.WithCancel(context.Background())

@@ -42,18 +42,15 @@ logging.PanicError(cores.Start(srv))
 
 ```go
 cores.WithConsulRegister(consulutils.RegistrationConfig{
-    Client:         client,
-    K8sServiceName: "orders-service",
+    Client: client,
+    Tags:   []string{"dev"},
 })
 ```
 
 | 字段 | 含义与默认值 |
 | --- | --- |
 | `Client` | 可选；省略使用公共 Client |
-| `K8sServiceName` | Kubernetes Service 名；省略使用当前进程服务名 |
-| `ClusterDomain` | Kubernetes 集群域，默认 `cluster.local` |
 | `ServiceAddress` | 显式覆盖注册地址的 host，不含 scheme 或端口 |
-| `CheckHost` | 显式覆盖健康检查 host，不含 scheme 或端口；管理端口由 cores 实际监听地址取得 |
 | `Tags` / `Meta` | 注册标签及元数据；集群自动记录 `namespace`、`pod_uid` |
 | `RequestTimeout` | 单次 Consul 请求超时，默认 3 秒 |
 | `RetryInterval` | 重试起始间隔及成功后的确认间隔，默认 5 秒 |
@@ -61,7 +58,7 @@ cores.WithConsulRegister(consulutils.RegistrationConfig{
 | `CheckTimeout` | Consul HTTP 检查超时，默认 2 秒 |
 | `DeregisterCriticalServiceAfter` | 持续不健康后的自动注销时间，默认 10 分钟 |
 
-注册使用业务实际监听端口，健康检查使用管理端口，两者独立。集群中 Kubernetes Service 的 `port` 必须与业务实际监听端口一致；`RegistrationConfig` 不再另设端口。仅运行消费者的服务仍可使用 `Start` 提供健康接口；只有实际需要被其他服务发现并调用时才开启注册。
+注册使用业务实际监听端口，健康检查使用管理端口，两者独立。集群中 Kubernetes Service 的 `port` 必须与业务实际监听端口一致；`RegistrationConfig` 不再另设端口。健康检查 host 在集群固定使用 `POD_IP`，本地固定使用 `127.0.0.1`，不能单独覆盖；`ServiceAddress` 只覆盖注册地址，不改变健康检查地址。Consul 必须能访问自动生成的检查地址。仅运行消费者的服务仍可使用 `Start` 提供健康接口；只有实际需要被其他服务发现并调用时才开启注册。
 
 ## Kubernetes 环境
 
@@ -104,13 +101,13 @@ livenessProbe:
 | 实例区分 | 实例 ID 包含当前 Pod UID，不同 Pod 不覆盖彼此 |
 | HTTP 健康检查 | `http://<当前 Pod IP>:6060/ready` |
 
-多个 Pod 注册相同 Service 域名，并使用各自 Pod IP 检查自身状态；调用流量仍由 Kubernetes Service 分配到后端 Pod。Kubernetes Service 名与进程服务名不同时，通过 `K8sServiceName` 提供；集群域通过 `ClusterDomain` 提供。业务端口由实际 Listener 推导，不单独覆盖。
+集群默认注册地址固定按 `{进程服务名}.{namespace}.svc.cluster.local` 生成，Kubernetes Service 名沿用进程服务名，集群域固定为 `cluster.local`；需要显式指定其他注册地址时，可使用 `ServiceAddress`。多个 Pod 注册相同 Service 域名，并使用各自 Pod IP 检查自身状态；调用流量仍由 Kubernetes Service 分配到后端 Pod。业务端口由实际 Listener 推导，不单独覆盖。
 
 同一个 Consul 中不同 namespace 的同名服务仍属于同一个逻辑服务名。发现端需要按 `namespace` 元数据或应用约定的环境标签筛选；唯一实例 ID 只解决记录覆盖问题，不自动隔离环境。通过 Consul 得到域名后，调用方仍需要能解析并访问该集群域名。
 
 ## 本地开发与示例
 
-本地启动独立的 Consul dev Agent，再启动所需服务；每个服务默认注册 `127.0.0.1` 和业务实际监听端口，每个进程有独立实例 ID。Consul 与应用在同一主机上时默认地址可用；若 Consul 运行在容器或其他主机，需通过 `CheckHost` 等配置提供它实际可访问的地址。
+本地启动独立的 Consul dev Agent，再启动所需服务；每个服务默认注册 `127.0.0.1` 和业务实际监听端口，每个进程有独立实例 ID。健康检查固定使用 `127.0.0.1` 和管理端口，因此本地 Consul 必须能通过该地址访问应用；容器或其他主机中的 Consul 需确保其网络环境满足这一条件。
 
 ```sh
 # 先在另一个终端启动本机 Consul（需要已安装 consul）

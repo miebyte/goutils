@@ -24,9 +24,6 @@ import (
 // Client 必须连接固定的 Consul Agent，不能在多个 Agent 之间随机分发请求。
 type RegistrationConfig struct {
 	ServiceAddress string // 显式覆盖注册地址，只填写主机名或 IP。
-	K8sServiceName string
-	ClusterDomain  string
-	CheckHost      string // 显式覆盖实例健康检查的主机名或 IP。
 	Tags           []string
 	Meta           map[string]string
 	Client         *api.Client
@@ -38,35 +35,25 @@ type RegistrationConfig struct {
 	DeregisterCriticalServiceAfter time.Duration
 }
 
-// Registration 管理当前进程的注册，不拥有共享 Consul 客户端的生命周期。
-type Registration struct {
-	client         *api.Client
-	service        *api.AgentServiceRegistration
-	requestTimeout time.Duration
-	retryInterval  time.Duration
-	attempted      atomic.Bool
+func getServicePort(address string) (int, error) {
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return 0, fmt.Errorf("invalid address: %w", err)
+	}
+
+	portInt, err := strconv.Atoi(port)
+	if err != nil {
+		return 0, fmt.Errorf("invalid port: %w", err)
+	}
+
+	if portInt < 1 || portInt > 65535 {
+		return 0, errors.New("port must be between 1 and 65535")
+	}
+
+	return portInt, nil
 }
 
-// NewRegistration 根据部署身份生成稳定的实例 ID；本地进程使用独立 UUID。
-// serviceName 和 servicePort 是服务身份，通常由启动器从服务名和已绑定的业务 listener 获取。
-// managementAddress 必须是已绑定的内部 HTTP listener 地址，健康路径固定为 /ready。
-func NewRegistration(serviceName string, servicePort int, config RegistrationConfig, managementAddress string) (*Registration, error) {
-	serviceName = strings.TrimSpace(serviceName)
-	if serviceName == "" || strings.ContainsAny(serviceName, "/?# \t\r\n") {
-		return nil, errors.New("consul service name must not be empty or contain URL separators or spaces")
-	}
-	if servicePort < 1 || servicePort > 65535 {
-		return nil, errors.New("consul service port must be between 1 and 65535")
-	}
-	_, managementPort, err := net.SplitHostPort(managementAddress)
-	if err != nil {
-		return nil, fmt.Errorf("invalid management listener address: %w", err)
-	}
-	port, err := strconv.Atoi(managementPort)
-	if err != nil || port < 1 || port > 65535 {
-		return nil, errors.New("management listener must have a bound TCP port")
-	}
-
+func supplyDefaultConfig(config *RegistrationConfig) error {
 	for _, option := range []struct {
 		name         string
 		value        *time.Duration
@@ -79,41 +66,74 @@ func NewRegistration(serviceName string, servicePort int, config RegistrationCon
 		{"critical deregistration delay", &config.DeregisterCriticalServiceAfter, 10 * time.Minute},
 	} {
 		if *option.value < 0 {
-			return nil, fmt.Errorf("consul %s must be positive", option.name)
+			return fmt.Errorf("consul %s must be positive", option.name)
 		}
 		if *option.value == 0 {
 			*option.value = option.defaultValue
 		}
 	}
 
+	return nil
+}
+
+// NewRegistration 根据部署身份生成稳定的实例 ID；本地进程使用独立 UUID。
+// serviceName 来自进程服务名，businessAddress 和 managementAddress 使用已绑定的监听地址。
+// 健康检查固定使用当前实例的管理端口和 /ready，不跟随注册地址覆盖。
+func NewRegistration(serviceName string, businessAddress string, managementAddress string, config RegistrationConfig) (*Registration, error) {
+	serviceName = strings.TrimSpace(serviceName)
+	if serviceName == "" || strings.ContainsAny(serviceName, "/?# \t\r\n") {
+		return nil, errors.New("consul service name must not be empty or contain URL separators or spaces")
+	}
+
+	businessPort, err := getServicePort(businessAddress)
+	if err != nil {
+		return nil, fmt.Errorf("invalid business listener address: %w", err)
+	}
+
+	managementPort, err := getServicePort(managementAddress)
+	if err != nil {
+		return nil, fmt.Errorf("invalid management listener address: %w", err)
+	}
+
+	err = supplyDefaultConfig(&config)
+	if err != nil {
+		return nil, fmt.Errorf("supply default config: %w", err)
+	}
+
+	// 尝试获取 k8s 集群的环境变量
 	namespace := strings.TrimSpace(os.Getenv("POD_NAMESPACE"))
 	podUID := strings.TrimSpace(os.Getenv("POD_UID"))
 	podIP := strings.TrimSpace(os.Getenv("POD_IP"))
+
+	// 复制一份元信息
 	meta := maps.Clone(config.Meta)
+
+	// 默认使用 127.0.0.1 作为服务地址和检查主机
 	address, checkHost := "127.0.0.1", "127.0.0.1"
+
+	// 生成一个唯一的实例 ID
 	instanceID := uuid.NewString()
+
+	// 任何一个集群环境变量被设置，都认为在 k8s 集群中运行
+	// 但是必须三个变量同时被设置才会允许继续注册
 	if namespace != "" || podUID != "" || podIP != "" {
 		if namespace == "" || podUID == "" || podIP == "" {
 			return nil, errors.New("POD_NAMESPACE, POD_UID and POD_IP must all be set in Kubernetes")
 		}
+
 		if net.ParseIP(podIP) == nil {
 			return nil, errors.New("POD_IP must be a valid IP address")
 		}
-		k8sServiceName := config.K8sServiceName
-		if k8sServiceName == "" {
-			k8sServiceName = serviceName
-		}
-		if !validDNSLabel(namespace) || !validDNSLabel(k8sServiceName) {
+
+		if !validDNSLabel(namespace) || !validDNSLabel(serviceName) {
 			return nil, errors.New("Kubernetes namespace and service name must be valid DNS labels")
 		}
+
 		if strings.ContainsAny(podUID, "/?# \t\r\n") {
 			return nil, errors.New("POD_UID must not contain URL separators or spaces")
 		}
-		domain := strings.TrimSuffix(config.ClusterDomain, ".")
-		if domain == "" {
-			domain = "cluster.local"
-		}
-		address = k8sServiceName + "." + namespace + ".svc." + domain
+		// 集群内统一按进程服务名和标准集群域生成地址，健康检查始终指向当前 Pod。
+		address = serviceName + "." + namespace + ".svc.cluster.local"
 		checkHost = podIP
 		instanceID = namespace + "-" + podUID
 		if meta == nil {
@@ -122,18 +142,17 @@ func NewRegistration(serviceName string, servicePort int, config RegistrationCon
 		meta["namespace"] = namespace
 		meta["pod_uid"] = podUID
 	}
+
+	// 如果显式覆盖了服务地址，则使用覆盖的地址
 	if config.ServiceAddress != "" {
 		address = config.ServiceAddress
 	}
-	if config.CheckHost != "" {
-		checkHost = config.CheckHost
-	}
+
+	// 验证服务地址是否合法
 	if err := validateRegistrationHost(address); err != nil {
 		return nil, fmt.Errorf("invalid consul service address: %w", err)
 	}
-	if err := validateRegistrationHost(checkHost); err != nil {
-		return nil, fmt.Errorf("invalid consul check host: %w", err)
-	}
+
 	if config.Client == nil {
 		config.Client, err = DefaultClient()
 		if err != nil {
@@ -141,7 +160,7 @@ func NewRegistration(serviceName string, servicePort int, config RegistrationCon
 		}
 	}
 
-	id := fmt.Sprintf("%s-%d-%s", serviceName, servicePort, instanceID)
+	id := fmt.Sprintf("%s-%d-%s", serviceName, businessPort, instanceID)
 	return &Registration{
 		client:         config.Client,
 		requestTimeout: config.RequestTimeout,
@@ -150,12 +169,12 @@ func NewRegistration(serviceName string, servicePort int, config RegistrationCon
 			ID:      id,
 			Name:    serviceName,
 			Address: address,
-			Port:    servicePort,
+			Port:    businessPort,
 			Tags:    slices.Clone(config.Tags),
 			Meta:    meta,
 			Check: &api.AgentServiceCheck{
 				CheckID:                        "service:" + id,
-				HTTP:                           "http://" + net.JoinHostPort(checkHost, managementPort) + "/ready",
+				HTTP:                           "http://" + net.JoinHostPort(checkHost, strconv.Itoa(managementPort)) + "/ready",
 				Interval:                       config.CheckInterval.String(),
 				Timeout:                        config.CheckTimeout.String(),
 				Status:                         api.HealthCritical,
@@ -165,21 +184,37 @@ func NewRegistration(serviceName string, servicePort int, config RegistrationCon
 	}, nil
 }
 
+// Registration 管理当前进程的注册，不拥有共享 Consul 客户端的生命周期。
+type Registration struct {
+	client         *api.Client
+	service        *api.AgentServiceRegistration
+	requestTimeout time.Duration
+	retryInterval  time.Duration
+	attempted      atomic.Bool
+}
+
 // Run 首次注册后持续核实；仅在记录丢失时补注册，避免重置已有检查的 critical 计时。
 // 网络失败采用退避重试，不终止业务服务；ctx 取消时停止请求和等待。
 func (r *Registration) Run(ctx context.Context) {
+	// 失败时从重试间隔开始退避，单次等待最长不超过一分钟。
 	delay := r.retryInterval
 	maxDelay := max(r.retryInterval, time.Minute)
+
+	// 只在状态从未确认变为已确认时打日志。
 	confirmed := false
 	for ctx.Err() == nil {
+		// 确保当前实例已注册
 		err := r.ensureRegistered(ctx)
+		// 核实过程中被取消时直接退出，不再安排下一轮等待。
 		if ctx.Err() != nil {
 			return
 		}
+
 		wait := r.retryInterval
 		if err != nil {
 			confirmed = false
 			innerlog.Logger.Warnc(ctx, "Consul registration %s failed: %v", r.service.ID, err)
+			// 在当前窗口的一半到全长之间随机等待，错开多个实例的重试。
 			wait = delay/2 + time.Duration(rand.Int64N(int64(delay-delay/2)+1))
 			if delay < maxDelay/2 {
 				delay *= 2
@@ -191,6 +226,7 @@ func (r *Registration) Run(ctx context.Context) {
 				innerlog.Logger.Infoc(ctx, "Consul registration %s confirmed at %s", r.service.ID, net.JoinHostPort(r.service.Address, strconv.Itoa(r.service.Port)))
 				confirmed = true
 			}
+			// 本轮成功后恢复初始间隔，避免沿用失败时拉长的窗口。
 			delay = r.retryInterval
 		}
 		timer := time.NewTimer(wait)
@@ -204,20 +240,31 @@ func (r *Registration) Run(ctx context.Context) {
 }
 
 func (r *Registration) ensureRegistered(ctx context.Context) error {
+	// 如果还没有尝试过注册，则尝试注册
 	if !r.attempted.Load() {
 		return r.register(ctx)
 	}
+
+	// 尝试查询当前实例是否已注册
 	queryCtx, cancel := context.WithTimeout(ctx, r.requestTimeout)
 	service, _, err := r.client.Agent().Service(r.service.ID, (&api.QueryOptions{}).WithContext(queryCtx))
 	cancel()
+
+	// 如果查询成功且实例存在，则认为已注册
 	if err == nil && service != nil {
 		r.attempted.Store(true)
 		return nil
 	}
-	var statusError api.StatusError
-	if err != nil && (!errors.As(err, &statusError) || statusError.Code != http.StatusNotFound) {
-		return err
+
+	// Consul 返回的是值类型 StatusError。404 和空结果都表示记录已丢失。
+	if err != nil {
+		statusError, ok := errors.AsType[api.StatusError](err)
+		if !ok || statusError.Code != http.StatusNotFound {
+			return fmt.Errorf("consul service lookup failed: %w", err)
+		}
 	}
+
+	// 上下文已取消时不再补注册。
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -229,6 +276,8 @@ func (r *Registration) register(ctx context.Context) error {
 	defer cancel()
 	// 请求可能已被 Agent 执行，即使响应失败，退出时也必须尝试清理。
 	r.attempted.Store(true)
+
+	// 注册服务
 	return r.client.Agent().ServiceRegisterOpts(r.service, (api.ServiceRegisterOpts{}).WithContext(registerCtx))
 }
 

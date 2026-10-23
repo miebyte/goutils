@@ -134,11 +134,11 @@ srv := cores.NewCores(
 logging.PanicError(cores.Start(srv))
 ```
 
-只在显式添加 `WithConsulRegister()` 时注册。服务名统一沿用进程服务名（flags 或构建注入），注册端口由业务实际监听端口推导，不再另外传入服务名和端口。需要自定义 Client、Kubernetes Service 名等时，最多传入一个 `consulutils.RegistrationConfig`。监听初始化完成后后台注册；Consul 请求失败只记录日志并重试，不终止业务服务。退出时先停止重试、将就绪状态设为未就绪，再注销当前实例。脚本模式忽略该注册选项。
+只在显式添加 `WithConsulRegister()` 时注册。服务名统一沿用进程服务名（flags 或构建注入），注册端口由业务实际监听端口推导，不再另外传入服务名和端口。需要自定义 Client、注册地址、标签或检查间隔等时，最多传入一个 `consulutils.RegistrationConfig`。监听初始化完成后后台注册；Consul 请求失败只记录日志并重试，不终止业务服务。退出时先停止重试、将就绪状态设为未就绪，再注销当前实例。脚本模式忽略该注册选项。
 
 默认复用 `consulutils.DefaultClient()`，与 `flags/v2` 的配置读取和 Watch 共用同一个官方 SDK Client 和 HTTP 连接池。自定义 Client 时，同时传给 `flags.WithRemoteConsulProvider(client)` 和 `RegistrationConfig.Client`。关闭配置 Watch 不关闭注册器；注册失败策略不改变远程配置初始化失败时的行为。
 
-集群通过 `POD_NAMESPACE`、`POD_UID`、`POD_IP` 三个环境变量识别，必须全部提供。注册地址使用 `{K8sServiceName}.{namespace}.svc.{ClusterDomain}`，Kubernetes Service 名默认沿用进程服务名，集群域默认 `cluster.local`。端口使用业务实际监听端口，因此 Kubernetes Service 的 `port` 必须与其一致；实例 ID 包含 Pod UID。健康检查指向 `http://{POD_IP}:{管理端口}/ready`，不能指向 Kubernetes Service 域名，否则可能检查到其他 Pod。
+集群通过 `POD_NAMESPACE`、`POD_UID`、`POD_IP` 三个环境变量识别，必须全部提供。默认注册地址固定按 `{进程服务名}.{namespace}.svc.cluster.local` 生成，Kubernetes Service 名沿用进程服务名，集群域固定为 `cluster.local`；显式 `ServiceAddress` 仍可覆盖注册地址。端口使用业务实际监听端口，因此 Kubernetes Service 的 `port` 必须与其一致；实例 ID 包含 Pod UID。健康检查固定指向 `http://{POD_IP}:{管理端口}/ready`，本地则固定使用 `127.0.0.1`，不支持单独覆盖检查 host；Consul 必须能访问自动生成的检查地址。
 
 本地默认注册 `127.0.0.1` 和业务实际监听端口，使用进程实例 ID 区分多次启动；Consul 必须能访问该实例的管理 HTTP。字段说明和 Downward API 配置见仓库 [consulutils/README.md](../../../consulutils/README.md)，可运行的组合示例见 `example/cores-consul`。
 

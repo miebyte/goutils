@@ -13,7 +13,7 @@ import (
 
 	"github.com/miebyte/goutils/consulutils"
 	"github.com/miebyte/goutils/flags/v2/provider"
-	"github.com/miebyte/goutils/internal/share"
+	"github.com/miebyte/goutils/share"
 
 	consulapi "github.com/hashicorp/consul/api"
 	consulwatch "github.com/hashicorp/consul/api/watch"
@@ -37,7 +37,7 @@ type ConsulProvider struct {
 var _ provider.ConfigProvider = (*ConsulProvider)(nil)
 
 // NewConsulClient 默认复用公共 client，也可注入一个定制 client。
-// prefix 在创建 provider 时计算，外层延迟初始化保证服务名已完成参数解析。
+// prefix 在创建 provider 时计算，服务名由调用方在 Parse 前通过 share 初始化。
 func NewConsulClient(clients ...*consulapi.Client) (*ConsulProvider, error) {
 	if len(clients) > 1 {
 		return nil, fmt.Errorf("consul config provider accepts at most one client")

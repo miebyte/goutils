@@ -6,7 +6,7 @@ import (
 
 	"github.com/miebyte/goutils/consulutils"
 	"github.com/miebyte/goutils/internal/innerlog"
-	"github.com/miebyte/goutils/internal/share"
+	"github.com/miebyte/goutils/share"
 )
 
 // WithConsulRegister 显式启用 Consul 注册，仅在 Start 的服务模式下生效。

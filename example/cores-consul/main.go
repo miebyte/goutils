@@ -7,6 +7,7 @@ import (
 	"github.com/miebyte/goutils/cores"
 	"github.com/miebyte/goutils/flags/v2"
 	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/share"
 )
 
 type AppConfig struct {
@@ -22,11 +23,13 @@ var (
 )
 
 func main() {
+	// 服务名在启动阶段统一设置，配置路径和服务注册共用这个名称。
+	share.SetServiceName("orders")
 	// 配置读取、配置监听和服务注册默认共用 consulutils.DefaultClient()。
 	// 远程配置初始化失败仍会终止启动，与注册失败后台重试的策略独立。
 	// 显式传入 --configFile 时改用本地文件，便于单独验证注册失败的恢复行为。
 	flags.Parse(
-		flags.WithRemoteConfig(flags.WithServiceName("orders")),
+		flags.WithRemoteConfig(),
 		flags.WithConfigWatch(),
 	)
 	defer flags.Close()
@@ -49,7 +52,7 @@ func main() {
 		opts = append(opts, cores.WithPprof())
 	}
 	if registerEnabled() {
-		// 注册身份由框架统一取得：服务名沿用 flags，端口使用业务实际监听端口。
+		// 注册身份由框架统一取得：服务名读取 share，端口使用业务实际监听端口。
 		opts = append(opts, cores.WithConsulRegister())
 	}
 

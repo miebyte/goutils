@@ -15,9 +15,11 @@ import (
 	"github.com/miebyte/goutils/cores"
 	"github.com/miebyte/goutils/flags"
 	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/share"
 )
 
 func main() {
+	share.SetServiceName("flags-example")
 	flags.Parse()
 
 	srv := cores.NewCores(

@@ -6,10 +6,12 @@
 //
 // (c) 2024 Example Corp. All rights reserved.
 
+// Package share 维护进程级共享信息，服务名由各模块统一读取。
 package share
 
 import (
 	"strings"
+	"sync/atomic"
 
 	"github.com/miebyte/goutils/buildinfo"
 	"github.com/miebyte/goutils/utils"
@@ -21,7 +23,9 @@ const (
 )
 
 var (
-	ServiceName func() string = func() string { return buildinfo.ServiceName }
+	// 服务名由本包持有，不能再由配置模块替换为 Flag getter。
+	// nil 表示尚未显式设置，此时沿用构建时注入的默认值。
+	serviceName atomic.Pointer[string]
 	Tag         func() string = func() string { return buildinfo.Version }
 	Debug       func() bool   = func() bool { return false }
 
@@ -43,8 +47,10 @@ func init() {
 	}
 }
 
+// SetServiceName 设置进程级服务名，优先于环境变量和构建注入值。
+// 应在 flags.Parse、依赖初始化和 cores.Start 之前调用，运行期间不应更换服务名。
 func SetServiceName(name string) {
-	ServiceName = func() string { return name }
+	serviceName.Store(&name)
 }
 
 func SetTag(tag string) {
@@ -55,6 +61,10 @@ func GetHostName() string {
 	return HostName
 }
 
+// GetServiceName 返回统一的进程服务名，配置路径、服务注册、日志和缓存均使用此值。
 func GetServiceName() string {
-	return ServiceName()
+	if name := serviceName.Load(); name != nil {
+		return *name
+	}
+	return buildinfo.ServiceName
 }

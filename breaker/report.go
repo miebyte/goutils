@@ -8,7 +8,7 @@ import (
 
 	"github.com/miebyte/goutils/debounce"
 	"github.com/miebyte/goutils/internal/innerlog"
-	"github.com/miebyte/goutils/internal/share"
+	"github.com/miebyte/goutils/share"
 )
 
 var (

@@ -15,7 +15,7 @@ import (
 
 	consulapi "github.com/hashicorp/consul/api"
 	"github.com/miebyte/goutils/consulutils"
-	"github.com/miebyte/goutils/internal/share"
+	"github.com/miebyte/goutils/share"
 )
 
 func testConsulClient(t *testing.T, handler http.Handler) *consulapi.Client {
@@ -41,9 +41,9 @@ func clearPodEnvironment(t *testing.T) {
 
 func setConsulTestServiceName(t *testing.T, name string) {
 	t.Helper()
-	original := share.ServiceName
+	original := share.GetServiceName()
 	share.SetServiceName(name)
-	t.Cleanup(func() { share.ServiceName = original })
+	t.Cleanup(func() { share.SetServiceName(original) })
 }
 
 func TestConsulFailureRetriesWithoutStoppingService(t *testing.T) {

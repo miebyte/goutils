@@ -53,6 +53,7 @@ API / Interface → Application → Domain ← Infrastructure
 
 - 服务生命周期、HTTP 挂载、Worker、优雅退出：读取 [references/cores.md](references/cores.md)。
 - Flag、JSON 配置、`Struct`、`Validate()`、`Reload()`、配置监听或多运行模式：读取 [references/flags.md](references/flags.md)。
+- 服务名在 `main` 开始、`flags.Parse` 前通过公共 `share.SetServiceName` 设置，配置与注册统一读取 `share.GetServiceName`；完整优先级见仓库 [share/README.md](../../share/README.md)。
 - Gin Engine、路由分组、请求绑定、参数清洗/校验、统一响应：读取 [references/ginutils.md](references/ginutils.md)。
 - WebSocket 命名空间、房间、事件和连接生命周期：读取 [references/websocketutils.md](references/websocketutils.md)。
 

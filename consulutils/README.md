@@ -20,6 +20,7 @@ Client 首次使用时读取官方 SDK 的默认配置和 `CONSUL_HTTP_ADDR`、`
 ## 在 cores 中启用注册
 
 ```go
+share.SetServiceName("orders")
 srv := cores.NewCores(
     cores.WithServiceAddress(":8080"),
     cores.WithHttpHandler(cores.HttpHandler{ApiPrefix: "/", Handler: handler}),
@@ -28,7 +29,7 @@ srv := cores.NewCores(
 logging.PanicError(cores.Start(srv))
 ```
 
-注册默认关闭；添加 `WithConsulRegister()` 后，仅在 `Start` 服务模式执行。服务名由当前进程服务名统一取得，业务端口由框架实际绑定的 Listener 取得，无需重复指定，也不能通过注册配置覆盖。服务名需通过 flags 的 `--serviceName/-s`、`WithServiceName` 或构建注入配置。
+注册默认关闭；添加 `WithConsulRegister()` 后，仅在 `Start` 服务模式执行。服务名统一读取 `share.GetServiceName()`，业务端口由框架实际绑定的 Listener 取得，无需重复指定，也不能通过注册配置覆盖。在 `main` 开始、`flags.Parse` 前调用 `share.SetServiceName("orders")`；未显式设置时，依次回退到环境变量 `ServiceName` 和 `buildinfo.ServiceName`。环境变量原有 `name:tag` 格式保留；服务名只在启动阶段设置，运行期间不变，详见 [share](../share/README.md)。
 
 完成监听初始化后后台注册，请求失败只记录日志并重试，业务服务继续运行。失败默认从 5 秒开始指数退避，最长 1 分钟，并加入抖动；成功后默认每 5 秒确认记录仍存在，Agent 重启或记录被移除时重新注册。重试始终复用当前进程的实例 ID。
 

@@ -5,9 +5,9 @@ import (
 
 	"github.com/miebyte/goutils/flags/v2/internal/config"
 	"github.com/miebyte/goutils/internal/innerlog"
-	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
 	"github.com/miebyte/goutils/logging/level"
+	"github.com/miebyte/goutils/share"
 	"github.com/miebyte/goutils/snail"
 	"github.com/spf13/pflag"
 )
@@ -32,20 +32,14 @@ type Option struct {
 type OptionFunc func(*Option)
 type RemoteConfigOptionFunc func(*RemoteConfigOption)
 
-func WithServiceName(name string) RemoteConfigOptionFunc {
-	return func(o *RemoteConfigOption) {
-		o.ServiceName = name
-	}
-}
-
 type RemoteConfigOption struct {
-	ServiceName string
-	provider    ConfigProvider
+	provider ConfigProvider
 }
 
 // WithRemoteConfig 允许已声明的 Struct key 在 Parse 阶段统一从 Consul KV 读取 JSON。
 // 普通 Flag 仍只使用命令行参数和默认值，不读取远程配置。
 // 默认使用 SDK 默认配置及 CONSUL_* 环境变量，KV 路径为 /configs/{serviceName}/{key}。
+// serviceName 由 share.GetServiceName 读取，应在 Parse 前完成设置。
 // WithRemoteConsulProvider 可注入共用的 client。Getter 和 Struct Parser 只读取缓存。
 // 显式 --configFile 优先使用本地文件，Struct 的远程选项在本地模式下不生效。
 func WithRemoteConfig(opts ...RemoteConfigOptionFunc) OptionFunc {
@@ -57,10 +51,6 @@ func WithRemoteConfig(opts ...RemoteConfigOptionFunc) OptionFunc {
 		}
 
 		o.RemoteOption = rco
-		if rco.ServiceName != "" {
-			share.SetServiceName(rco.ServiceName)
-			innerlog.Logger.Infof("set ServiceName as %s", rco.ServiceName)
-		}
 	}
 }
 
@@ -79,12 +69,9 @@ func WithSuperConfUp(n int) OptionFunc {
 	}
 }
 
-func GetServiceName() string {
-	return share.ServiceName()
-}
-
 // Parse is used to parse the command line arguments and the configuration file.
 // it just can be called once or it will panic.
+// 服务身份由调用方通过 share.SetServiceName 设置，参数和配置不会改写服务名。
 func Parse(opts ...OptionFunc) {
 	opt := initOption(opts...)
 
@@ -140,7 +127,6 @@ func initOption(opts ...OptionFunc) *Option {
 }
 
 func initSuperFlags(opt *Option) {
-	share.ServiceName = StringP("serviceName", "s", share.ServiceName(), "Set the service name.")
 	share.Debug = Bool("debug", false, "Tag Whether to enable debug mode.")
 	configFilePath = StringP("configFile", "f", opt.ConfigPath, "Specify config file. (JSON-only)")
 

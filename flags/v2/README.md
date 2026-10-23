@@ -3,7 +3,10 @@
 在 `Parse` 时传入 `WithRemoteConfig()`，即可从 Consul KV 读取已声明的 `Struct` 配置：
 
 ```go
-import flags "github.com/miebyte/goutils/flags/v2"
+import (
+    flags "github.com/miebyte/goutils/flags/v2"
+    "github.com/miebyte/goutils/share"
+)
 
 type AppConfig struct {
     Limit int `json:"limit"`
@@ -12,8 +15,9 @@ type AppConfig struct {
 var appConfig = flags.Struct("app", &AppConfig{Limit: 10}, "应用配置")
 
 func main() {
+    share.SetServiceName("orders")
     flags.Parse(
-        flags.WithRemoteConfig(flags.WithServiceName("orders")),
+        flags.WithRemoteConfig(),
         flags.WithConfigWatch(),
     )
     defer flags.Close()
@@ -31,11 +35,12 @@ func main() {
 
 默认配置路径为 `/configs/{serviceName}/{key}`，上述示例读取 `/configs/orders/app`。SDK 去掉开头的 `/` 后，请求 `/v1/kv/configs/orders/app`，所以 Consul 中的 KV key 为 `configs/orders/app`。值直接存放 JSON，例如 `{"limit":20}`，无需额外包一层 `"app"`。key 不存在时使用声明的默认值；连接、权限或 JSON 解析错误会中止加载。普通 Flag 仍只读取命令行和默认值，不从 Consul 读取。
 
-服务名沿用 `WithServiceName`、环境变量 `ServiceName` 或构建注入的 `buildinfo.ServiceName`，命令行 `--serviceName/-s` 可以覆盖它。Provider 延迟到首次使用时读取服务名；未设置服务名时省略这一层，得到 `/configs/{key}`。
+服务名统一通过公共 `share` 包读取，应在 `main` 开始、`flags.Parse` 前显式调用 `share.SetServiceName("orders")`。未显式设置时，依次回退到环境变量 `ServiceName` 和构建注入的 `buildinfo.ServiceName`；环境变量原有 `name:tag` 格式保留。Provider 延迟到首次使用时读取服务名，未设置服务名时省略这一层，得到 `/configs/{key}`。服务名只在启动阶段设置，不在运行期间变更，详见 [share](../../share/README.md)。
 
 需要与服务注册共用一个自定义连接时，在组合根创建一次 Client：
 
 ```go
+share.SetServiceName("orders")
 clientConfig := consulapi.DefaultConfig()
 clientConfig.Address = "127.0.0.1:8500"
 client, err := consulapi.NewClient(clientConfig)
@@ -45,7 +50,6 @@ if err != nil {
 
 flags.Parse(
     flags.WithRemoteConfig(
-        flags.WithServiceName("orders"),
         flags.WithRemoteConsulProvider(client),
     ),
 )
@@ -63,7 +67,7 @@ if err := cores.Start(srv); err != nil {
 }
 ```
 
-其中 `consulapi` 是 `github.com/hashicorp/consul/api` 的导入别名；注册配置中的 `Client` 与配置 Provider 持有同一个对象，服务名统一取 `flags` 当前服务名，注册端口取业务实际监听端口。默认连接无需传入注册配置，直接使用 `cores.WithConsulRegister()` 即可。省略 `WithRemoteConsulProvider()` 的参数时仍使用公共 Client；不传该选项也使用公共 Client。独立使用 `SuperFlags` 时，也可通过 `SetConfigProvider(flags.NewConsulProvider(client))` 设置来源。默认根路径固定为 `/configs`，无需为共享连接重复创建 Client。
+其中 `consulapi` 是 `github.com/hashicorp/consul/api` 的导入别名；注册配置中的 `Client` 与配置 Provider 持有同一个对象，服务名统一取 `share.GetServiceName()`，注册端口取业务实际监听端口。默认连接无需传入注册配置，直接使用 `cores.WithConsulRegister()` 即可。省略 `WithRemoteConsulProvider()` 的参数时仍使用公共 Client；不传该选项也使用公共 Client。独立使用 `SuperFlags` 时，也可通过 `SetConfigProvider(flags.NewConsulProvider(client))` 设置来源。默认根路径固定为 `/configs`，无需为共享连接重复创建 Client。
 
 单个 Struct 可使用 `WithConfigPath("shared/app")` 替换 key 后缀，默认得到 `/configs/orders/shared/app`；使用 `WithFullConfigPath("/shared/app")` 则原样读取 `/shared/app`，不追加根前缀或服务名。本地文件模式仍按 Struct 声明的 key 读取，不使用这些远程路径选项。
 

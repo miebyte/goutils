@@ -6,6 +6,7 @@ import (
 	"github.com/miebyte/goutils/cores"
 	"github.com/miebyte/goutils/flags"
 	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/share"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -20,6 +21,7 @@ var (
 )
 
 func main() {
+	share.SetServiceName("cores-grpc-example")
 	flags.Parse()
 
 	grpcServer := grpc.NewServer()

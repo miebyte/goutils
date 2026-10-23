@@ -10,12 +10,12 @@ import (
 	"time"
 
 	consulapi "github.com/hashicorp/consul/api"
-	"github.com/miebyte/goutils/internal/share"
+	"github.com/miebyte/goutils/share"
 )
 
 func TestConsulProviderSharesInjectedClientForReadAndWatch(t *testing.T) {
-	previousName := share.ServiceName
-	t.Cleanup(func() { share.ServiceName = previousName })
+	previousName := share.GetServiceName()
+	t.Cleanup(func() { share.SetServiceName(previousName) })
 	share.SetServiceName("before-parse")
 	changed := make(chan struct{})
 	var reads, watches atomic.Int32
@@ -64,7 +64,7 @@ func TestConsulProviderSharesInjectedClientForReadAndWatch(t *testing.T) {
 	source := options.provider
 	t.Cleanup(func() { _ = source.Close() })
 
-	// 选项先创建，服务名后解析；首次使用时才拼出最终的配置前缀。
+	// 选项可先声明，调用方在首次使用前设置身份；配置前缀从 share 读取。
 	share.SetServiceName("parsed-service")
 	path := source.Path("app")
 	if path != "/configs/parsed-service/app" {

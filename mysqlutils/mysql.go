@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/miebyte/goutils/internal/share"
+	"github.com/miebyte/goutils/share"
 	"github.com/pkg/errors"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"

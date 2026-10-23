@@ -2,6 +2,17 @@
 
 本项目是一个 Go 语言工具库脚手架，包含了在开发过程中常用的各种功能模块。
 
+## 统一服务名
+
+在 `main` 开始时通过公共 `share` 包设置服务名，再解析配置和启动服务：
+
+```go
+share.SetServiceName("orders")
+flags.Parse(flags.WithRemoteConfig())
+```
+
+配置路径、Consul 注册和生命周期日志统一读取 `share.GetServiceName()`。服务名优先级为显式设置、环境变量 `ServiceName`、`buildinfo.ServiceName`，只在启动阶段设置，运行期间不再修改。环境变量原有 `name:tag` 格式仍保留，详见 [share](share/README.md)。
+
 ## 服务与脚本启动
 
 `cores.Start(srv)` 用于长期运行的 HTTP、gRPC 和 Worker 服务，默认在 `:6060` 提供管理 HTTP，包括 `/health_check` 存活检查和 `/ready` 就绪检查；pprof 和 Swagger 按需启用。需要修改管理地址时，在构造阶段传入 `cores.WithInternalHTTPAddress(":6061")`，启动函数不再接收端口。

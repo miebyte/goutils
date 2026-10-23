@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/share"
 	"github.com/miebyte/goutils/utils"
 	"github.com/pkg/errors"
 	"github.com/redis/go-redis/v9"
@@ -43,7 +43,7 @@ type (
 // CacheContext 是缓存调用上下文。
 // 用于设置缓存调用的各种参数，并最终调用 fn 获取结果。
 // fn 调用结果会存储在指定的 redis 中，key 格式为"{prefix}:{serviceName}:{funcName}:{argsMd5}:{sn}"
-// {serviceName} 为服务名称，用于区分不同的服务。通过 buildinfo.GetProjectName 获取
+// {serviceName} 为服务名称，用于区分不同的服务，通过 share.GetServiceName 获取。
 // {funcName} 为 fn 的名称
 // {argsMd5} 为 fn 的参数的 md5 值
 // {sn} 为 Serializer 的识别号，用于区分不同的序列化方式。

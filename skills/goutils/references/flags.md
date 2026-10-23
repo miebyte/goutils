@@ -13,6 +13,7 @@ var (
 )
 
 func main() {
+    share.SetServiceName("orders")
     flags.Parse()
 
     cfg := new(Config)
@@ -31,11 +32,12 @@ func main() {
 
 内置参数包括：
 
-- `--serviceName/-s`
 - `--serviceTag/-t`
 - `--debug`
 - `--watchConfig`
 - `--configFile/-f`
+
+服务名由公共 `share` 包管理，在 `main` 开始、`flags.Parse` 前调用 `share.SetServiceName("orders")`，通过 `share.GetServiceName()` 读取。未显式设置时，依次回退到环境变量 `ServiceName` 和构建注入的 `buildinfo.ServiceName`；环境变量原有 `name:tag` 格式保留。两个版本的 `flags` 都不负责声明或覆盖服务名，运行期间不要修改服务名。完整约定见仓库 [share/README.md](../../../share/README.md)。
 
 不要打印完整配置对象，除非已经确认其中没有密码、Token 或 Secret。当前配置监听在 Debug 日志中会输出变更配置，包含敏感字段的服务应谨慎同时启用 Debug 和配置监听。
 
@@ -110,8 +112,9 @@ var command = flags.Func(
 var appConfig = flags.Struct("app", &AppConfig{Limit: 10}, "应用配置")
 
 func main() {
+    share.SetServiceName("orders")
     flags.Parse(
-        flags.WithRemoteConfig(flags.WithServiceName("orders")),
+        flags.WithRemoteConfig(),
         flags.WithConfigWatch(),
     )
     defer flags.Close()

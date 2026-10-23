@@ -15,6 +15,7 @@ import (
 	"github.com/miebyte/goutils/cores"
 	"github.com/miebyte/goutils/flags/v2"
 	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/share"
 )
 
 type Config struct {
@@ -26,11 +27,11 @@ var (
 )
 
 func main() {
+	// 在读取远程配置前固定服务名，运行期间不再修改。
+	share.SetServiceName("test")
 	flags.Parse(
 		flags.WithConfigWatch(),
-		flags.WithRemoteConfig(
-			flags.WithServiceName("test"),
-		),
+		flags.WithRemoteConfig(),
 	)
 	defer flags.Close()
 

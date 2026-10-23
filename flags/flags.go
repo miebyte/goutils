@@ -10,14 +10,13 @@ package flags
 
 import (
 	"os"
-	"strings"
 	"time"
 
 	"github.com/miebyte/goutils/flags/provider"
 	"github.com/miebyte/goutils/internal/innerlog"
-	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
 	"github.com/miebyte/goutils/logging/level"
+	"github.com/miebyte/goutils/share"
 	"github.com/miebyte/goutils/snail"
 	"github.com/spf13/pflag"
 )
@@ -47,12 +46,9 @@ func WithConfigWatch() OptionFunc {
 	}
 }
 
-func GetServiceName() string {
-	return share.ServiceName()
-}
-
 // Parse is used to parse the command line arguments and the configuration file.
 // it just can be called once or it will panic.
+// 服务身份由调用方通过 share.SetServiceName 设置，参数和配置不会改写服务名。
 func Parse(opts ...OptionFunc) {
 	opt := initOption(opts...)
 
@@ -60,7 +56,6 @@ func Parse(opts ...OptionFunc) {
 	pflag.Parse()
 
 	setDebugMod()
-	parseServiceName()
 
 	configPath := config()
 	if configPath == "" {
@@ -81,15 +76,6 @@ func Parse(opts ...OptionFunc) {
 	setDebugMod()
 
 	snail.Init()
-}
-
-func parseServiceName() {
-	serviceName := share.ServiceName()
-	segs := strings.SplitN(serviceName, ":", 2)
-	if len(segs) >= 2 {
-		share.SetServiceName(segs[0])
-		share.SetTag(segs[1])
-	}
 }
 
 func setDebugMod() {
@@ -120,7 +106,6 @@ func initSuperFlags(opt *Option) {
 
 	sf.SetConfigName(defaultConfigName)
 	sf.SetConfigType(defaultConfigType)
-	share.ServiceName = StringP("serviceName", "s", share.ServiceName(), "Set the service name.")
 	share.Tag = StringP("serviceTag", "t", share.Tag(), "Set the service tag.")
 	share.Debug = Bool("debug", false, "Tag whether to enable debug mode.")
 	opt.WatchConfig = Bool("watchConfig", false, "Tag whether to watch config")

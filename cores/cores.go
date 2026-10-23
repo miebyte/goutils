@@ -20,8 +20,8 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/miebyte/goutils/consulutils"
 	"github.com/miebyte/goutils/internal/innerlog"
-	"github.com/miebyte/goutils/internal/share"
 	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/share"
 	"github.com/miebyte/goutils/utils"
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
@@ -198,8 +198,8 @@ func (c *CoresService) serve() error {
 		c.ctx = logging.With(c.ctx, "Alias", c.serviceAlias)
 	}
 
-	if share.ServiceName() != "" {
-		c.ctx = logging.With(c.ctx, "Service", share.ServiceName())
+	if share.GetServiceName() != "" {
+		c.ctx = logging.With(c.ctx, "Service", share.GetServiceName())
 	}
 
 	c.innerMountFns = append(c.innerMountFns, c.gracefulKill())

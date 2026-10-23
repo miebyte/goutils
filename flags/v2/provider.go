@@ -19,7 +19,7 @@ type ConfigWatcher = provider.ConfigWatcher
 type Event = provider.Event
 
 // NewConsulProvider 默认复用 consulutils.DefaultClient，也可传入一个定制 client。
-// 延迟到首次读取时才创建 provider，确保使用 Parse 后的服务名生成配置路径。
+// 延迟到首次读取时才创建 provider，允许调用方在 Parse 前设置 share 中的服务名。
 func NewConsulProvider(clients ...*consulapi.Client) ConfigProvider {
 	return &remoteProvider{
 		newClient: func() (ConfigProvider, error) {

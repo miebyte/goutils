@@ -19,6 +19,7 @@ import (
 	"github.com/miebyte/goutils/flags"
 	"github.com/miebyte/goutils/ginutils"
 	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/share"
 )
 
 type Config struct {
@@ -47,6 +48,7 @@ var (
 )
 
 func main() {
+	share.SetServiceName("cores-example")
 	flags.Parse()
 
 	conf := new(Config)

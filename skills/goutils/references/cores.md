@@ -134,7 +134,7 @@ srv := cores.NewCores(
 logging.PanicError(cores.Start(srv))
 ```
 
-只在显式添加 `WithConsulRegister()` 时注册。服务名统一沿用进程服务名（flags 或构建注入），注册端口由业务实际监听端口推导，不再另外传入服务名和端口。需要自定义 Client、注册地址、标签或检查间隔等时，最多传入一个 `consulutils.RegistrationConfig`。监听初始化完成后后台注册；Consul 请求失败只记录日志并重试，不终止业务服务。退出时先停止重试、将就绪状态设为未就绪，再注销当前实例。脚本模式忽略该注册选项。
+只在显式添加 `WithConsulRegister()` 时注册。服务名统一读取公共 `share.GetServiceName()`，应在 `main` 开始、`flags.Parse` 前通过 `share.SetServiceName` 显式设置，运行期间不变；未设置时依次回退到环境变量 `ServiceName` 和构建注入的 `buildinfo.ServiceName`。注册端口由业务实际监听端口推导，不再另外传入服务名和端口。需要自定义 Client、注册地址、标签或检查间隔等时，最多传入一个 `consulutils.RegistrationConfig`。监听初始化完成后后台注册；Consul 请求失败只记录日志并重试，不终止业务服务。退出时先停止重试、将就绪状态设为未就绪，再注销当前实例。脚本模式忽略该注册选项。
 
 默认复用 `consulutils.DefaultClient()`，与 `flags/v2` 的配置读取和 Watch 共用同一个官方 SDK Client 和 HTTP 连接池。自定义 Client 时，同时传给 `flags.WithRemoteConsulProvider(client)` 和 `RegistrationConfig.Client`。关闭配置 Watch 不关闭注册器；注册失败策略不改变远程配置初始化失败时的行为。
 

@@ -6,11 +6,13 @@ import (
 	"github.com/miebyte/goutils/cores"
 	"github.com/miebyte/goutils/flags/v2"
 	"github.com/miebyte/goutils/logging"
+	"github.com/miebyte/goutils/share"
 )
 
 var message = flags.String("message", "执行一次性任务", "脚本输出内容")
 
 func main() {
+	share.SetServiceName("cores-script")
 	flags.Parse()
 	defer flags.Close()
 

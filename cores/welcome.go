@@ -17,18 +17,24 @@ import (
 )
 
 func (c *CoresService) welcome() {
-	if c.listener != nil {
+	if c.internalHTTP.listener != nil {
 		innerlog.Logger.Infow(
-			c.ctx, "Listening...",
-			logging.String("Addr", c.listener.Addr().String()),
+			c.ctx, "Internal HTTP listening...",
+			logging.String("Addr", c.internalHTTP.listener.Addr().String()),
+		)
+	}
+	if c.grpc != nil && c.grpc.listener != nil {
+		innerlog.Logger.Infow(
+			c.ctx, "Grpc listening...",
+			logging.String("Addr", c.grpc.listener.Addr().String()),
 		)
 	}
 
-	if len(c.httpPattern) > 0 {
-		_, port, _ := net.SplitHostPort(c.listenAddr)
+	for _, srv := range c.httpServers {
+		_, port, _ := net.SplitHostPort(srv.listener.Addr().String())
 		target := fmt.Sprintf("127.0.0.1:%s", port)
 
-		for _, pattern := range c.httpPattern {
+		for _, pattern := range srv.patterns {
 			innerlog.Logger.Infow(
 				c.ctx, "HttpHandler enabled.",
 				logging.String("URL", fmt.Sprintf("http://%s%s", target, pattern.pattern)),

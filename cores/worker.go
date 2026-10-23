@@ -225,7 +225,7 @@ func waitContext(ctx context.Context, maxWait time.Duration, isWaitDone bool, fn
 		}
 	}()
 
-	stop := make(chan error)
+	stop := make(chan error, 1)
 
 	go func() {
 		defer func() {

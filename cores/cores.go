@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
@@ -40,6 +42,7 @@ type mountFn struct {
 type httpPattern struct {
 	pattern string
 	name    string
+	handler http.Handler
 }
 
 type CoresService struct {
@@ -48,15 +51,12 @@ type CoresService struct {
 
 	serviceAlias string
 
-	listenAddr       string
-	listenPort       int
-	listener         net.Listener
-	httpMux          *http.ServeMux
-	httpPattern      []httpPattern
-	httpHandler      http.Handler
+	internalHTTP     *httpServer
+	httpServers      []*httpServer
 	httpCors         bool
 	httpServerConfig *HttpServerConfig
-	httpServer       *http.Server
+	grpc             *grpcServer
+	stopping         atomic.Bool
 
 	workers       []Worker
 	mountFns      []mountFn
@@ -100,13 +100,11 @@ func NewCores(opts ...ServiceOption) *CoresService {
 	cs := &CoresService{
 		ctx:              ctx,
 		cancel:           cancel,
-		httpMux:          http.NewServeMux(),
+		internalHTTP:     &httpServer{mux: http.NewServeMux()},
 		httpServerConfig: defaultHttpServerConfig,
-		httpPattern:      make([]httpPattern, 0),
 		mountFns:         make([]mountFn, 0),
 		innerMountFns:    make([]mountFn, 0),
 	}
-	cs.httpHandler = cs.httpMux
 	for _, opt := range opts {
 		opt(cs)
 	}
@@ -115,10 +113,56 @@ func NewCores(opts ...ServiceOption) *CoresService {
 }
 
 func (c *CoresService) justWorker() bool {
-	return c.listener == nil
+	return c.internalHTTP.listener == nil && len(c.httpServers) == 0 && c.grpc == nil
 }
 
 func (c *CoresService) serve() error {
+	defer c.cancel()
+	defer func() {
+		if c.internalHTTP.listener != nil {
+			_ = c.internalHTTP.listener.Close()
+		}
+		for _, srv := range c.httpServers {
+			if srv.listener != nil {
+				_ = srv.listener.Close()
+			}
+		}
+		if c.grpc != nil && c.grpc.listener != nil {
+			_ = c.grpc.listener.Close()
+		}
+	}()
+
+	for _, srv := range c.httpServers {
+		if srv.addr == "" {
+			return errors.New("http listen address must not be empty")
+		}
+		for _, pattern := range srv.patterns {
+			if pattern.handler == nil {
+				return errors.New("http handler must not be nil")
+			}
+			srv.mux.Handle(pattern.pattern, http.StripPrefix(strings.TrimSuffix(pattern.pattern, "/"), pattern.handler))
+		}
+		listener, err := net.Listen("tcp", srv.addr)
+		if err != nil {
+			return errors.Wrapf(err, "failed to start http listener at %s", srv.addr)
+		}
+		srv.listener = listener
+	}
+
+	if c.grpc != nil {
+		if c.grpc.server == nil {
+			return errors.New("grpc server must not be nil")
+		}
+		if c.grpc.addr == "" {
+			return errors.New("grpc listen address must not be empty")
+		}
+		listener, err := net.Listen("tcp", c.grpc.addr)
+		if err != nil {
+			return errors.Wrap(err, "failed to start grpc listener")
+		}
+		c.grpc.listener = listener
+	}
+
 	if c.serviceAlias != "" {
 		c.ctx = logging.With(c.ctx, "Alias", c.serviceAlias)
 	}
@@ -129,13 +173,18 @@ func (c *CoresService) serve() error {
 
 	c.innerMountFns = append(c.innerMountFns, c.gracefulKill())
 
-	if c.justWorker() {
-		return c.startServer()
+	if c.internalHTTP.listener != nil {
+		c.setupPprof()
+		c.internalHTTP.mux.Handle(healthCheckUrl, http.HandlerFunc(healthCheckApi))
+		c.innerMountFns = append(c.innerMountFns, c.listenHttp(c.internalHTTP, "InternalHttpListener"))
+	}
+	for _, srv := range c.httpServers {
+		c.innerMountFns = append(c.innerMountFns, c.listenHttp(srv, "HttpListener:"+srv.listener.Addr().String()))
 	}
 
-	c.setupPprof()
-
-	c.innerMountFns = append(c.innerMountFns, c.listenHttp(c.listener))
+	if c.grpc != nil {
+		c.innerMountFns = append(c.innerMountFns, c.listenGrpc())
+	}
 
 	return c.startServer()
 }
@@ -148,52 +197,72 @@ func (c *CoresService) startServer() error {
 }
 
 func (c *CoresService) runMountFn() error {
-	runFn := func(mountFns []mountFn) *errgroup.Group {
-		grp, ctx := errgroup.WithContext(c.ctx)
+	stop := make(chan struct{}, 1)
+	requestStop := func() {
+		select {
+		case stop <- struct{}{}:
+		default:
+		}
+	}
+
+	runFn := func(mountFns []mountFn, userWorker bool) *errgroup.Group {
+		grp := new(errgroup.Group)
 		for _, mountFn := range mountFns {
 			grp.Go(func() (err error) {
-				cctx := logging.With(ctx, "Worker", mountFn.name)
-				err = waitContext(cctx, mountFn.maxWait, mountFn.waitAllDone, mountFn.fn)
-				if err != nil {
-					return errors.Wrap(err, "waitContext")
+				cctx := logging.With(c.ctx, "Worker", mountFn.name)
+				if userWorker {
+					err = waitContext(cctx, mountFn.maxWait, mountFn.waitAllDone, mountFn.fn)
+				} else {
+					err = mountFn.fn(cctx)
+				}
+				if err != nil && !errors.Is(err, context.Canceled) {
+					requestStop()
+					return errors.Wrapf(err, "%s run failed", mountFn.name)
+				}
+				if !userWorker {
+					requestStop()
 				}
 
 				innerlog.Logger.Debugc(cctx, "worker run done")
 				return nil
 			})
 
-			innerlog.Logger.Debugc(ctx, "worker(%s) start", mountFn.name)
+			innerlog.Logger.Debugc(c.ctx, "worker(%s) start", mountFn.name)
 		}
 
 		return grp
 	}
 
-	workerGroup := runFn(c.mountFns)
-	innerGroup := runFn(c.innerMountFns)
+	workerGroup := runFn(c.mountFns, true)
+	innerGroup := runFn(c.innerMountFns, false)
+	workerDone := make(chan error, 1)
+	go func() {
+		workerDone <- workerGroup.Wait()
+		if c.justWorker() {
+			requestStop()
+		}
+	}()
 
-	workerErr := workerGroup.Wait()
-	innerlog.Logger.Infoc(c.ctx, "all user worker run done")
-
-	// 所有自定义 worker 运行完成
-	// 触发 cores 结束
-	if c.justWorker() {
-		c.cancel()
+	select {
+	case <-stop:
+	case <-c.ctx.Done():
 	}
 
-	// 等待所有内置 worker 运行完成
+	shutdownErr := c.shutdownServers()
+	c.cancel()
+	workerErr := <-workerDone
+	innerlog.Logger.Infoc(c.ctx, "all user worker run done")
 	innerErr := innerGroup.Wait()
 
-	if workerErr == nil && innerErr == nil {
-		return nil
-	}
-
-	return multierror.Append(workerErr, innerErr)
+	return multierror.Append(workerErr, innerErr, shutdownErr).ErrorOrNil()
 }
 
 func Run(srv *CoresService) error {
 	return srv.serve()
 }
 
+// Start runs the configured services and an internal HTTP server at addr.
+// Business HTTP addresses are configured separately with WithHttpHandler.
 func Start[T listenEntry](srv *CoresService, addr T) error {
 	var address string
 	switch v := any(addr).(type) {
@@ -207,16 +276,9 @@ func Start[T listenEntry](srv *CoresService, addr T) error {
 
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		return errors.Wrap(err, "failed to start listener")
+		return errors.Wrap(err, "failed to start internal http listener")
 	}
 
-	_, port, _ := net.SplitHostPort(listener.Addr().String())
-	portInt, err := strconv.Atoi(port)
-	if err == nil {
-		srv.listenPort = portInt
-	}
-
-	srv.listener = listener
-	srv.listenAddr = listener.Addr().String()
+	srv.internalHTTP.listener = listener
 	return srv.serve()
 }

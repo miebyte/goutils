@@ -16,6 +16,7 @@ import (
 
 	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 func (c *CoresService) gracefulKill() mountFn {
@@ -31,30 +32,54 @@ func (c *CoresService) gracefulKill() mountFn {
 				syscall.SIGTERM,
 				syscall.SIGQUIT,
 			)
+			defer signal.Stop(ch)
 
 			select {
 			case sg := <-ch:
 				innerlog.Logger.Infoc(ctx, "Graceful stopping service... Signal: %s", sg)
-				if c.httpServer != nil {
-					shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultMaxWait)
-					defer cancel()
-					if prettyErrorCheck(ctx, c.httpServer.Shutdown(shutdownCtx), "Http server shutdown") {
-						innerlog.Logger.Infoc(ctx, "Graceful stopped http server")
-					}
-				}
-
-				if c.listener != nil {
-					_ = c.listener.Close()
-					innerlog.Logger.Infoc(ctx, "Graceful stopped listener")
-				}
-
-				c.cancel()
-
-				innerlog.Logger.Infoc(ctx, "Graceful stopped service successfully")
 				return errors.Errorf("Signal: %s", sg.String())
 			case <-ctx.Done():
-				return ctx.Err()
+				return nil
 			}
 		},
 	}
+}
+
+func (c *CoresService) shutdownServers() error {
+	c.stopping.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultMaxWait)
+	defer cancel()
+
+	var grp errgroup.Group
+	for _, srv := range append([]*httpServer{c.internalHTTP}, c.httpServers...) {
+		if srv.server != nil {
+			grp.Go(func() error {
+				if err := srv.server.Shutdown(ctx); err != nil {
+					_ = srv.server.Close()
+					return errors.Wrapf(err, "http server shutdown at %s", srv.listener.Addr().String())
+				}
+				return nil
+			})
+		}
+	}
+	if c.grpc != nil {
+		grp.Go(func() error {
+			done := make(chan struct{})
+			go func() {
+				c.grpc.server.GracefulStop()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+				return nil
+			case <-ctx.Done():
+				innerlog.Logger.Warnc(c.ctx, "Force closing grpc server after %v", defaultMaxWait)
+				// Stop can also block behind GracefulStop or WaitForHandlers.
+				go c.grpc.server.Stop()
+				return errors.Wrap(ctx.Err(), "grpc server shutdown")
+			}
+		})
+	}
+	return grp.Wait()
 }

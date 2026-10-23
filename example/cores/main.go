@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -38,9 +39,10 @@ type ExtraConfig struct {
 }
 
 var (
-	port          = flags.Int("port", 8080, "port")
-	configFlag    = flags.Struct("config", (*Config)(nil), "server config")
-	extraConfFlag = flags.Struct("extra", (*ExtraConfig)(nil), "extra config")
+	port            = flags.Int("port", 8080, "HTTP port")
+	internalAddress = flags.String("internal-address", "127.0.0.1:6060", "internal HTTP listen address")
+	configFlag      = flags.Struct("config", (*Config)(nil), "server config")
+	extraConfFlag   = flags.Struct("extra", (*ExtraConfig)(nil), "extra config")
 )
 
 func main() {
@@ -68,7 +70,7 @@ func main() {
 
 	srv := cores.NewCores(
 		cores.WithPprof(),
-		cores.WithHttpHandler("/", app),
+		cores.WithHttpHandler(fmt.Sprintf(":%d", port()), "/", app),
 		cores.WithWorker(func(ctx context.Context) error {
 			ticket := time.NewTicker(time.Second * 3)
 			defer ticket.Stop()
@@ -85,5 +87,5 @@ func main() {
 			}
 		}),
 	)
-	logging.PanicError(cores.Start(srv, port()))
+	logging.PanicError(cores.Start(srv, internalAddress()))
 }

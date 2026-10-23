@@ -31,23 +31,23 @@ func (cs *CoresService) setupPprof() {
 		return
 	}
 
-	if cs.listenAddr == "" {
+	if cs.internalHTTP.listener == nil {
 		innerlog.Logger.Warnf("Cores server not start by cores.Start(). Pprof can not be enabled")
 		return
 	}
 
-	cs.httpMux.HandleFunc(pprofUrl, pprof.Index)
-	cs.httpMux.HandleFunc(pprofUrl+"cmdline", pprof.Cmdline)
-	cs.httpMux.HandleFunc(pprofUrl+"profile", pprof.Profile)
-	cs.httpMux.HandleFunc(pprofUrl+"symbol", pprof.Symbol)
-	cs.httpMux.HandleFunc(pprofUrl+"trace", pprof.Trace)
-	cs.httpMux.Handle(pprofUrl+"goroutine", pprof.Handler("goroutine"))
-	cs.httpMux.Handle(pprofUrl+"goroutineleak", pprof.Handler("goroutineleak"))
-	cs.httpMux.Handle(pprofUrl+"heap", pprof.Handler("heap"))
-	cs.httpMux.Handle(pprofUrl+"threadcreate", pprof.Handler("threadcreate"))
-	cs.httpMux.Handle(pprofUrl+"block", pprof.Handler("block"))
+	cs.internalHTTP.mux.HandleFunc(pprofUrl, pprof.Index)
+	cs.internalHTTP.mux.HandleFunc(pprofUrl+"cmdline", pprof.Cmdline)
+	cs.internalHTTP.mux.HandleFunc(pprofUrl+"profile", pprof.Profile)
+	cs.internalHTTP.mux.HandleFunc(pprofUrl+"symbol", pprof.Symbol)
+	cs.internalHTTP.mux.HandleFunc(pprofUrl+"trace", pprof.Trace)
+	cs.internalHTTP.mux.Handle(pprofUrl+"goroutine", pprof.Handler("goroutine"))
+	cs.internalHTTP.mux.Handle(pprofUrl+"goroutineleak", pprof.Handler("goroutineleak"))
+	cs.internalHTTP.mux.Handle(pprofUrl+"heap", pprof.Handler("heap"))
+	cs.internalHTTP.mux.Handle(pprofUrl+"threadcreate", pprof.Handler("threadcreate"))
+	cs.internalHTTP.mux.Handle(pprofUrl+"block", pprof.Handler("block"))
 
-	_, port, _ := net.SplitHostPort(cs.listenAddr)
+	_, port, _ := net.SplitHostPort(cs.internalHTTP.listener.Addr().String())
 	target := fmt.Sprintf("localhost:%s", port)
 
 	innerlog.Logger.Debugf("Pprof enabled. URL=%s", fmt.Sprintf("http://%s%s", target, pprofUrl))

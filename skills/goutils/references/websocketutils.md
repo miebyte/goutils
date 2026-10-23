@@ -20,10 +20,11 @@ chat.On("send_message", func(c *websocketutils.Context) {
     _ = app.Send(c.Context(), req)
 })
 
-srv := cores.NewCores(cores.WithHttpHandler("/ws", ws))
+srv := cores.NewCores(cores.WithHttpHandler(":8080", "/ws", ws))
+logging.PanicError(cores.Run(srv))
 ```
 
-上例的公开地址 `/ws/chat` 经 `cores.WithHttpHandler` 去掉 `/ws` 后，WebSocket Server 收到 `/chat`，因此进入 `chat` 命名空间。`WithNamespacePrefix` 是针对 Handler 实际收到的 URL Path；组合使用时根据最终路径测试，不要重复配置已被 cores 剥离的前缀，否则连接会落入 `default`。
+上例监听业务端口 `:8080`，公开地址 `/ws/chat` 经 `cores.WithHttpHandler` 去掉 `/ws` 后，WebSocket Server 收到 `/chat`，因此进入 `chat` 命名空间。`WithNamespacePrefix` 是针对 Handler 实际收到的 URL Path；组合使用时根据最终路径测试，不要重复配置已被 cores 剥离的前缀，否则连接会落入 `default`。需要内部健康检查或 pprof 时，改用 `cores.Start(srv, "127.0.0.1:6060")`，内部端口与 WebSocket 业务端口独立。
 
 ## Frame 与事件
 

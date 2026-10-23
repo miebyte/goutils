@@ -65,10 +65,10 @@ func WithSwagger(handler http.Handler, opts ...swaggerOptionFn) ServiceOption {
 	}
 
 	return func(cs *CoresService) {
-		cs.httpMux.Handle(so.prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cs.internalHTTP.mux.Handle(so.prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, so.prefix+"/index.html", http.StatusFound)
 		}))
-		cs.httpMux.Handle(so.prefix+"/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cs.internalHTTP.mux.Handle(so.prefix+"/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			handler.ServeHTTP(w, r)
 		}))
 	}
@@ -79,7 +79,17 @@ type httpHandlerWithName interface {
 	Name() string
 }
 
-func WithHttpHandler(pattern string, handler http.Handler) ServiceOption {
+type httpServer struct {
+	addr     string
+	mux      *http.ServeMux
+	patterns []httpPattern
+	listener net.Listener
+	server   *http.Server
+}
+
+// WithHttpHandler mounts handler on a business HTTP address, separate from Start's
+// internal HTTP server. Handlers with the same address share a listener and mux.
+func WithHttpHandler(addr string, pattern string, handler http.Handler) ServiceOption {
 	return func(cs *CoresService) {
 		if !strings.HasPrefix(pattern, "/") {
 			pattern = "/" + pattern
@@ -93,22 +103,33 @@ func WithHttpHandler(pattern string, handler http.Handler) ServiceOption {
 		namedHandler, ok := handler.(httpHandlerWithName)
 		if ok {
 			handlerName = namedHandler.Name()
-		} else {
+		} else if handler != nil {
 			handlerName = logging.GetStructName(handler)
 		}
 
-		cs.httpPattern = append(cs.httpPattern, httpPattern{
+		var srv *httpServer
+		for _, existing := range cs.httpServers {
+			if existing.addr == addr {
+				srv = existing
+				break
+			}
+		}
+		if srv == nil {
+			srv = &httpServer{addr: addr, mux: http.NewServeMux()}
+			cs.httpServers = append(cs.httpServers, srv)
+		}
+		srv.patterns = append(srv.patterns, httpPattern{
 			pattern: pattern,
 			name:    handlerName,
+			handler: handler,
 		})
 
 		innerlog.Logger.Debugw(
 			context.TODO(), "Registered http endpoint.",
 			logging.String("pattern", pattern),
+			logging.String("addr", addr),
 			logging.String("name", handlerName),
 		)
-
-		cs.httpMux.Handle(pattern, http.StripPrefix(strings.TrimSuffix(pattern, "/"), handler))
 	}
 }
 
@@ -117,21 +138,20 @@ func healthCheckApi(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
-func (c *CoresService) listenHttp(lst net.Listener) mountFn {
+func (c *CoresService) listenHttp(srv *httpServer, name string) mountFn {
+	srv.server = &http.Server{
+		Handler:           srv.mux,
+		ReadTimeout:       c.httpServerConfig.ReadTimeout,
+		ReadHeaderTimeout: c.httpServerConfig.ReadHeaderTimeout,
+		WriteTimeout:      c.httpServerConfig.WriteTimeout,
+		IdleTimeout:       c.httpServerConfig.IdleTimeout,
+		MaxHeaderBytes:    c.httpServerConfig.MaxHeaderBytes,
+	}
+
 	return mountFn{
 		fn: func(ctx context.Context) (err error) {
-			c.httpMux.Handle(healthCheckUrl, http.HandlerFunc(healthCheckApi))
-
-			c.httpServer = &http.Server{
-				Handler:           c.httpHandler,
-				ReadTimeout:       c.httpServerConfig.ReadTimeout,
-				ReadHeaderTimeout: c.httpServerConfig.ReadHeaderTimeout,
-				WriteTimeout:      c.httpServerConfig.WriteTimeout,
-				IdleTimeout:       c.httpServerConfig.IdleTimeout,
-				MaxHeaderBytes:    c.httpServerConfig.MaxHeaderBytes,
-			}
-			err = c.httpServer.Serve(lst)
-			if errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) {
+			err = srv.server.Serve(srv.listener)
+			if errors.Is(err, http.ErrServerClosed) || (c.stopping.Load() && errors.Is(err, net.ErrClosed)) {
 				return nil
 			} else if err != nil {
 				innerlog.Logger.Errorc(ctx, "HttpListener serve error: %v\n", err)
@@ -139,7 +159,7 @@ func (c *CoresService) listenHttp(lst net.Listener) mountFn {
 			}
 			return nil
 		},
-		name: "HttpListener",
+		name: name,
 	}
 }
 

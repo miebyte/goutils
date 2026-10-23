@@ -37,7 +37,9 @@ func (c *CoresService) gracefulKill() mountFn {
 			select {
 			case sg := <-ch:
 				innerlog.Logger.Infoc(ctx, "Graceful stopping service... Signal: %s", sg)
-				return errors.Errorf("Signal: %s", sg.String())
+				// 主动停止属于正常退出；内部任务返回后仍会触发统一清理流程。
+				// 业务运行错误和排空超时由各自任务返回，不能把停止信号当成错误汇总。
+				return nil
 			case <-ctx.Done():
 				return nil
 			}

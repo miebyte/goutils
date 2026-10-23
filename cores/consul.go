@@ -83,6 +83,8 @@ func (c *CoresService) startConsulRegistration() func() {
 		err := registration.Deregister(ctx)
 		if err != nil {
 			innerlog.Logger.Warnc(c.ctx, "Consul deregistration failed: %v", err)
+		} else {
+			innerlog.Logger.Infoc(c.ctx, "Consul deregistration successful")
 		}
 	}
 }

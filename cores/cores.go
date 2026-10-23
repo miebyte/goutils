@@ -10,7 +10,6 @@ package cores
 
 import (
 	"context"
-	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -64,15 +63,7 @@ type CoresService struct {
 	innerMountFns []mountFn
 	waitAllDone   bool
 
-	sentryMonitor bool
-	useKafkaLog   bool
-	usePprof      bool
-
-	useTracing  bool
-	traceCloser io.Closer
-
-	usePrometheus             bool
-	prometheusMonitorDuration time.Duration
+	usePprof bool
 
 	cron *cron.Cron
 }

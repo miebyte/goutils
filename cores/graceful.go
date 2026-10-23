@@ -48,12 +48,6 @@ func (c *CoresService) gracefulKill() mountFn {
 					innerlog.Logger.Infoc(ctx, "Graceful stopped listener")
 				}
 
-				if c.traceCloser != nil {
-					if prettyErrorCheck(ctx, c.traceCloser.Close(), "Trace closer close") {
-						innerlog.Logger.Infoc(ctx, "Graceful stopped tracing")
-					}
-				}
-
 				c.cancel()
 
 				innerlog.Logger.Infoc(ctx, "Graceful stopped service successfully")

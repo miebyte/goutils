@@ -2,6 +2,7 @@ package redisutils
 
 import (
 	"fmt"
+	"time"
 )
 
 type RedisConfig struct {
@@ -12,7 +13,29 @@ type RedisConfig struct {
 	MinSize  int    `json:"minsize"`
 	MaxSize  int    `json:"maxsize"`
 	PoolSize int    `json:"poolsize"`
-	Timeout  int    `json:"timeout"`
+	// Timeout 是连接、读取和写入的超时秒数，为 0 时默认 5 秒。
+	Timeout int `json:"timeout"`
+	// ContextTimeoutEnabled 让命令读写遵循调用方 Context 的超时和截止时间。
+	ContextTimeoutEnabled bool `json:"context_timeout_enabled"`
+	// MaxRetries 为 0 时默认重试 3 次，为 -1 时禁用重试。
+	MaxRetries int `json:"max_retries"`
+}
+
+// Validate 校验配置，不修改调用方传入的值。
+func (conf *RedisConfig) Validate() error {
+	if conf == nil {
+		return fmt.Errorf("redis config must not be nil")
+	}
+	if conf.Db < 0 {
+		return fmt.Errorf("redis db must not be negative")
+	}
+	if conf.Timeout < 0 || int64(conf.Timeout) > int64((1<<63-1)/time.Second) {
+		return fmt.Errorf("redis timeout must be a non-negative number of seconds within time.Duration range")
+	}
+	if conf.MaxRetries < -1 {
+		return fmt.Errorf("redis max_retries must be -1 or greater")
+	}
+	return nil
 }
 
 // Address 返回 Redis 连接地址。
@@ -43,6 +66,10 @@ func (conf *RedisConfig) SetDefault() {
 
 	if conf.MaxSize == 0 {
 		conf.MaxSize = 50
+	}
+
+	if conf.Timeout == 0 {
+		conf.Timeout = 5
 	}
 }
 

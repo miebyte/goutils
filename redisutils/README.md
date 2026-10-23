@@ -18,9 +18,13 @@ RedisUtils 是一个简化 Redis 操作的 Go 工具包，基于 `github.com/red
 ```go
 // 创建配置
 conf := &redisutils.RedisConfig{
-    Host: "localhost",
-    Port: 6379,
+    Server: "localhost:6379",
     Db: 0,
+    Username: "mailer",
+    Password: "secret",
+    Timeout: 5,
+    ContextTimeoutEnabled: true,
+    MaxRetries: -1,
 }
 // 或使用默认配置
 conf := &redisutils.RedisConfig{}
@@ -34,22 +38,32 @@ if err != nil {
 defer client.Close()
 ```
 
+`NewRedisClient(conf)` 与 `conf.DialGORedisClient()` 使用相同的连接配置；构造函数不会修改传入的配置。创建时会执行 Ping，失败时返回错误并关闭客户端和连接池。
+
+- `Username`、`Password` 用于 ACL 认证；只配置密码时仍支持传统 AUTH。
+- `Timeout` 的单位为秒，同时设置连接、读取和写入超时；`0` 默认使用 5 秒，不接受负数或超出 `time.Duration` 范围的值。启动 Ping 也会创建相同超时的 Context。
+- `ContextTimeoutEnabled` 默认为 `false`，保持原有行为；设为 `true` 后，命令的网络读写还会遵循调用方 Context 的截止时间。未启用时，Context 不约束底层读写，总耗时可能包含多次读写和重试。
+- `MaxRetries` 沿用 go-redis 语义：`0` 默认重试 3 次，`-1` 禁用重试，正数指定重试次数，小于 `-1` 会返回配置错误。队列等非幂等写入应根据业务需要禁用自动重试。
+- `Validate()` 可在启动时单独校验配置；`NewRedisClient` 也会执行校验。`Db` 不接受负数，配置不能为 `nil`。
+- `SetDefault()` 会显式补齐地址、连接池大小和 `Timeout`。构造函数仅为零值 `Timeout` 补默认超时，其余零值沿用 go-redis 默认值。
+
 ### 多实例管理
 
 ```go
 configMap := redisutils.RedisConfigMap{
     "default": &redisutils.RedisConfig{
-        Host: "localhost",
-        Port: 6379,
+        Server: "localhost:6379",
     },
     "cache": &redisutils.RedisConfig{
-        Host: "cache.example.com",
-        Port: 6380,
+        Server: "cache.example.com:6380",
+        Timeout: 2,
+        ContextTimeoutEnabled: true,
+        MaxRetries: -1,
     },
 }
 
 // 初始化连接池
-pool, err := configMap.DialGoRedisPool()
+pool, err := redisutils.NewRedisPool(configMap)
 if err != nil {
     panic(err)
 }
@@ -59,6 +73,8 @@ defer pool.Close()
 defaultClient, err := pool.GetRedis() // 默认实例
 cacheClient, err := pool.GetRedis("cache") // 指定实例
 ```
+
+每个命名实例都会透传自己的认证、超时、Context 和重试配置。
 
 ### 值操作
 

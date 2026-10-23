@@ -46,19 +46,33 @@ type RedisClient struct {
 }
 
 func NewRedisClient(conf *RedisConfig) (*RedisClient, error) {
+	if err := conf.Validate(); err != nil {
+		return nil, err
+	}
+	config := *conf
+	if config.Timeout == 0 {
+		config.Timeout = 5
+	}
+	timeout := time.Duration(config.Timeout) * time.Second
 	client := redis.NewClient(&redis.Options{
-		Addr:         conf.Address(),
-		Password:     conf.Password,
-		DB:           conf.Db,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		MaxRetries:   3,
-		PoolSize:     conf.PoolSize,
-		MinIdleConns: conf.MinSize,
-		MaxIdleConns: conf.MaxSize,
+		Addr:                  config.Address(),
+		Username:              config.Username,
+		Password:              config.Password,
+		DB:                    config.Db,
+		DialTimeout:           timeout,
+		ReadTimeout:           timeout,
+		WriteTimeout:          timeout,
+		ContextTimeoutEnabled: config.ContextTimeoutEnabled,
+		MaxRetries:            config.MaxRetries,
+		PoolSize:              config.PoolSize,
+		MinIdleConns:          config.MinSize,
+		MaxIdleConns:          config.MaxSize,
 	})
 
-	if _, err := client.Ping(context.Background()).Result(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if _, err := client.Ping(ctx).Result(); err != nil {
+		_ = client.Close()
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 
+	consulapi "github.com/hashicorp/consul/api"
+
 	"github.com/miebyte/goutils/flags/v2/internal/config"
 	"github.com/miebyte/goutils/flags/v2/internal/consul"
 	"github.com/miebyte/goutils/flags/v2/internal/local"
@@ -16,18 +18,21 @@ type ConfigProvider = provider.ConfigProvider
 type ConfigWatcher = provider.ConfigWatcher
 type Event = provider.Event
 
-func NewConsulProvider() ConfigProvider {
+// NewConsulProvider 默认复用 consulutils.DefaultClient，也可传入一个定制 client。
+// 延迟到首次读取时才创建 provider，确保使用 Parse 后的服务名生成配置路径。
+func NewConsulProvider(clients ...*consulapi.Client) ConfigProvider {
 	return &remoteProvider{
 		newClient: func() (ConfigProvider, error) {
-			return consul.NewConsulClient()
+			return consul.NewConsulClient(clients...)
 		},
 	}
 }
 
-// WithRemoteConsulProvider 覆盖 Consul 连接和根前缀，路径仍会追加当前服务名和 key。
-func WithRemoteConsulProvider() RemoteConfigOptionFunc {
+// WithRemoteConsulProvider 为远程配置注入 client，省略参数时使用公共 client。
+// client 可同时用于服务注册；配置路径始终为 /configs/{serviceName}/{key}。
+func WithRemoteConsulProvider(clients ...*consulapi.Client) RemoteConfigOptionFunc {
 	return func(o *RemoteConfigOption) {
-		o.provider = NewConsulProvider()
+		o.provider = NewConsulProvider(clients...)
 	}
 }
 

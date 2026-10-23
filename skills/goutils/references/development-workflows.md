@@ -76,7 +76,7 @@ type UnitOfWork interface {
 - Worker 是外部触发适配器，调用 Application Service，不重新实现业务用例。
 - 长期循环必须监听 `ctx.Done()` 并返回。
 - 每次消息、任务或批次都传递 Context 到仓储和外部调用。
-- 由 `cores.WithWorker` 或 `cores.WithNameWorker` 注册；纯 Worker 服务用 `cores.Run`。
+- 由 `cores.WithWorker` 或 `cores.WithNameWorker` 注册；长期 Worker 服务用 `cores.Start`，一次性脚本用 `cores.Run`。
 - 重试必须有上限、退避和幂等策略，不能无限重试不可恢复错误。
 
 ## 外部系统适配

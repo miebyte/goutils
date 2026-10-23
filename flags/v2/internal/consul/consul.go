@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/miebyte/goutils/consulutils"
 	"github.com/miebyte/goutils/flags/v2/provider"
 	"github.com/miebyte/goutils/internal/share"
 
@@ -35,14 +36,26 @@ type ConsulProvider struct {
 
 var _ provider.ConfigProvider = (*ConsulProvider)(nil)
 
-func NewConsulClient() (*ConsulProvider, error) {
-	cfg := consulapi.DefaultConfig()
-	prefix := path.Join(defaultPrefix, share.GetServiceName())
-
-	client, err := consulapi.NewClient(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("create consul client: %w", err)
+// NewConsulClient 默认复用公共 client，也可注入一个定制 client。
+// prefix 在创建 provider 时计算，外层延迟初始化保证服务名已完成参数解析。
+func NewConsulClient(clients ...*consulapi.Client) (*ConsulProvider, error) {
+	if len(clients) > 1 {
+		return nil, fmt.Errorf("consul config provider accepts at most one client")
 	}
+	var client *consulapi.Client
+	if len(clients) == 1 {
+		client = clients[0]
+		if client == nil {
+			return nil, fmt.Errorf("consul config provider client is nil")
+		}
+	} else {
+		var err error
+		client, err = consulutils.DefaultClient()
+		if err != nil {
+			return nil, err
+		}
+	}
+	prefix := path.Join(defaultPrefix, share.GetServiceName())
 
 	p := &ConsulProvider{
 		client: client,
@@ -175,6 +188,7 @@ func (p *ConsulProvider) doneSignal() chan struct{} {
 }
 
 func (p *ConsulProvider) Close() error {
+	// 这里只停止当前 provider 的 Watch，注册器等组件仍可使用同一个 client。
 	p.closeOnce.Do(func() {
 		p.mu.Lock()
 		close(p.doneSignal())

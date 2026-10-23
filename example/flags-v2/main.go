@@ -22,7 +22,6 @@ type Config struct {
 }
 
 var (
-	port     = flags.Int("port", 0, "port")
 	confFlag = flags.Struct("config", (*Config)(nil), "config")
 )
 
@@ -33,6 +32,7 @@ func main() {
 			flags.WithServiceName("test"),
 		),
 	)
+	defer flags.Close()
 
 	confLoader, err := confFlag()
 	logging.PanicError(err)
@@ -54,5 +54,6 @@ func main() {
 		}),
 	)
 
-	logging.PanicError(cores.Start(srv, port()))
+	// 长期 Worker 使用服务模式；一次性任务应改用 cores.Run。
+	logging.PanicError(cores.Start(srv))
 }

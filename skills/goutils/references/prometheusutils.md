@@ -4,17 +4,20 @@
 
 ## 最简接入
 
-通过 `WithHttpHandler` 显式挂载到独立监控端口：
+通过 `WithHttpHandler` 将业务和采集路由组显式挂载到同一个业务 HTTP 端口：
 
 ```go
 srv := cores.NewCores(
-    cores.WithHttpHandler(":8080", "/", handler),
-    cores.WithHttpHandler("127.0.0.1:9090", "/metrics", prometheusutils.PrometheusHttpHandler()),
+    cores.WithServiceAddress(":8080"),
+    cores.WithHttpHandler(
+        cores.HttpHandler{ApiPrefix: "/api", Handler: handler},
+        cores.HttpHandler{ApiPrefix: "/metrics", Handler: prometheusutils.PrometheusHttpHandler()},
+    ),
 )
-logging.PanicError(cores.Run(srv))
+logging.PanicError(cores.Start(srv))
 ```
 
-上例的采集地址为 `http://127.0.0.1:9090/metrics/`。也可直接使用 `prometheusutils.PrometheusHttpHandler()` 挂到已有 HTTP Server。`cores` 不会自动挂载或采集业务 HTTP 指标；需要在业务代码或中间件中调用对应的上报函数。
+上例的采集地址为 `http://127.0.0.1:8080/metrics/`；`cores` 只允许一个业务 HTTP 地址，管理端口默认仍独立监听 `:6060`。也可直接使用 `prometheusutils.PrometheusHttpHandler()` 挂到已有 HTTP Server。`cores` 不会自动挂载或采集业务 HTTP 指标；需要在业务代码或中间件中调用对应的上报函数。
 
 ## 内置指标
 

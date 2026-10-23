@@ -11,7 +11,7 @@ import (
 func TestRunWorkersWithoutServers(t *testing.T) {
 	for _, wantErr := range []error{nil, errors.New("worker failed")} {
 		service := NewCores(WithWorker(func(context.Context) error { return wantErr }))
-		running := runTestService(t, service, "")
+		running := runTestService(t, service, false)
 		if err := running.wait(t); !errors.Is(err, wantErr) {
 			t.Fatalf("Run returned %v, want %v", err, wantErr)
 		}
@@ -19,7 +19,7 @@ func TestRunWorkersWithoutServers(t *testing.T) {
 }
 
 func TestStartHttpWithoutGrpc(t *testing.T) {
-	running := startTestService(t, true)
+	running := startTestService(t)
 	client := &http.Client{Timeout: serviceTestTimeout}
 	t.Cleanup(client.CloseIdleConnections)
 	response, err := client.Get("http://" + running.httpAddr + "/health_check")
@@ -37,16 +37,16 @@ func TestStartHttpWithoutGrpc(t *testing.T) {
 	assertAddrReleased(t, running.httpAddr)
 }
 
-func TestRunCronWithoutServers(t *testing.T) {
+func TestStartCronWithoutBusinessServers(t *testing.T) {
 	jobRan := make(chan struct{}, 1)
-	service := NewCores(WithCronWorker("test-cron", "@every 1s", func(context.Context) error {
+	service := NewCores(WithInternalHTTPAddress("127.0.0.1:0"), WithCronWorker("test-cron", "@every 1s", func(context.Context) error {
 		select {
 		case jobRan <- struct{}{}:
 		default:
 		}
 		return nil
 	}))
-	running := runTestService(t, service, "")
+	running := runTestService(t, service, true)
 	select {
 	case <-jobRan:
 	case <-running.finished:
@@ -56,6 +56,6 @@ func TestRunCronWithoutServers(t *testing.T) {
 	}
 	service.cancel()
 	if err := running.wait(t); err != nil {
-		t.Fatalf("Run returned %v", err)
+		t.Fatalf("Start returned %v", err)
 	}
 }

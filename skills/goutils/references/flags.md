@@ -101,3 +101,30 @@ var command = flags.Func(
 ```
 
 单一 HTTP 服务或单一 Worker 直接在 `main.go` 组装，不要为形式完整引入命令分派。
+
+## flags/v2 与共享 Consul Client
+
+新服务需要 Consul 配置或只读配置快照时，使用 `github.com/miebyte/goutils/flags/v2`；上文旧版 `flags.Struct` 的输出参数和原地重载方式不适用于 v2。
+
+```go
+var appConfig = flags.Struct("app", &AppConfig{Limit: 10}, "应用配置")
+
+func main() {
+    flags.Parse(
+        flags.WithRemoteConfig(flags.WithServiceName("orders")),
+        flags.WithConfigWatch(),
+    )
+    defer flags.Close()
+
+    config, err := appConfig()
+    logging.PanicError(err)
+    current := config.Load() // 当前只读快照，不修改其字段
+    _ = current.Limit
+}
+```
+
+默认读取 Consul KV 的 `configs/orders/app`，其中值直接保存 `AppConfig` 对应 JSON；普通 Flag 仍读取命令行和默认值。远程 key 不存在时使用默认配置，连接、权限、解析或校验错误使初始化失败。`WithConfigWatch()` 在有效更新时发布新快照，删除或无效更新保留上一份配置。显式 `--configFile/-f` 优先使用本地文件。
+
+v2 配置读取和 Watch 默认复用 `consulutils.DefaultClient()`，与 `cores.WithConsulRegister` 共用 HTTP 连接池。公共 Client 首次创建时读取 `CONSUL_HTTP_ADDR`、`CONSUL_HTTP_TOKEN` 等 SDK 环境配置。自定义连接时，创建一次官方 `*consulapi.Client`，同时传入 `flags.WithRemoteConsulProvider(client)` 和 `consulutils.RegistrationConfig{Client: client, ...}`。`flags.Close()` 只停止配置 Watch，不关闭共享 Client 或注销服务。
+
+配置初始化失败与注册失败采用独立策略：前者仍阻止启动，后者记录日志并在后台重试。完整 API 和示例见仓库 [flags/v2/README.md](../../../flags/v2/README.md) 和 [consulutils/README.md](../../../consulutils/README.md)。

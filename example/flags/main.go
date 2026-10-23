@@ -17,10 +17,6 @@ import (
 	"github.com/miebyte/goutils/logging"
 )
 
-var (
-	port = flags.Int("port", 0, "port")
-)
-
 func main() {
 	flags.Parse()
 
@@ -41,5 +37,6 @@ func main() {
 		}),
 	)
 
-	logging.PanicError(cores.Start(srv, port()))
+	// 长期 Worker 使用服务模式，默认提供 :6060/health_check 和 /ready。
+	logging.PanicError(cores.Start(srv))
 }

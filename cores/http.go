@@ -19,6 +19,7 @@ import (
 	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/miebyte/goutils/logging"
 	"github.com/pkg/errors"
+	"github.com/soheilhy/cmux"
 )
 
 const (
@@ -87,49 +88,57 @@ type httpServer struct {
 	server   *http.Server
 }
 
-// WithHttpHandler mounts handler on a business HTTP address, separate from Start's
-// internal HTTP server. Handlers with the same address share a listener and mux.
-func WithHttpHandler(addr string, pattern string, handler http.Handler) ServiceOption {
+// HttpHandler 表示一组业务路由前缀和处理器。
+// 请求会先去掉 ApiPrefix，再交给 Handler；空前缀等同于根路径。
+type HttpHandler struct {
+	ApiPrefix string
+	Handler   http.Handler
+}
+
+// WithHttpHandler 挂载多组业务路由，监听地址统一由 WithServiceAddress 指定。
+// 重复调用时追加路由；HTTP 与 gRPC 共用业务端口，管理 HTTP 保持独立。
+func WithHttpHandler(handlers ...HttpHandler) ServiceOption {
 	return func(cs *CoresService) {
-		if !strings.HasPrefix(pattern, "/") {
-			pattern = "/" + pattern
+		if cs.httpServer == nil {
+			cs.httpServer = &httpServer{mux: http.NewServeMux()}
+		}
+		if len(handlers) == 0 {
+			cs.configErr = errors.New("at least one HTTP handler is required")
+			return
 		}
 
-		if !strings.HasSuffix(pattern, "/") {
-			pattern = pattern + "/"
-		}
-
-		var handlerName string
-		namedHandler, ok := handler.(httpHandlerWithName)
-		if ok {
-			handlerName = namedHandler.Name()
-		} else if handler != nil {
-			handlerName = logging.GetStructName(handler)
-		}
-
-		var srv *httpServer
-		for _, existing := range cs.httpServers {
-			if existing.addr == addr {
-				srv = existing
-				break
+		for _, entry := range handlers {
+			pattern := entry.ApiPrefix
+			// ApiPrefix 是字面路径前缀，不接受 ServeMux 的通配符和方法语法。
+			// 提前返回配置错误，避免批量挂载时由 ServeMux.Handle 直接 panic。
+			if strings.ContainsAny(pattern, "{} \t\r\n") {
+				cs.configErr = errors.New("HTTP API prefix must be a literal path prefix")
+				return
 			}
-		}
-		if srv == nil {
-			srv = &httpServer{addr: addr, mux: http.NewServeMux()}
-			cs.httpServers = append(cs.httpServers, srv)
-		}
-		srv.patterns = append(srv.patterns, httpPattern{
-			pattern: pattern,
-			name:    handlerName,
-			handler: handler,
-		})
+			if !strings.HasPrefix(pattern, "/") {
+				pattern = "/" + pattern
+			}
+			if !strings.HasSuffix(pattern, "/") {
+				pattern += "/"
+			}
 
-		innerlog.Logger.Debugw(
-			context.TODO(), "Registered http endpoint.",
-			logging.String("pattern", pattern),
-			logging.String("addr", addr),
-			logging.String("name", handlerName),
-		)
+			var handlerName string
+			if namedHandler, ok := entry.Handler.(httpHandlerWithName); ok {
+				handlerName = namedHandler.Name()
+			} else if entry.Handler != nil {
+				handlerName = logging.GetStructName(entry.Handler)
+			}
+			cs.httpServer.patterns = append(cs.httpServer.patterns, httpPattern{
+				pattern: pattern,
+				name:    handlerName,
+				handler: entry.Handler,
+			})
+			innerlog.Logger.Debugw(
+				context.TODO(), "Registered http endpoint.",
+				logging.String("pattern", pattern),
+				logging.String("name", handlerName),
+			)
+		}
 	}
 }
 
@@ -151,7 +160,8 @@ func (c *CoresService) listenHttp(srv *httpServer, name string) mountFn {
 	return mountFn{
 		fn: func(ctx context.Context) (err error) {
 			err = srv.server.Serve(srv.listener)
-			if errors.Is(err, http.ErrServerClosed) || (c.stopping.Load() && errors.Is(err, net.ErrClosed)) {
+			if errors.Is(err, http.ErrServerClosed) || (c.stopping.Load() &&
+				(errors.Is(err, net.ErrClosed) || errors.Is(err, cmux.ErrServerClosed) || errors.Is(err, cmux.ErrListenerClosed))) {
 				return nil
 			} else if err != nil {
 				innerlog.Logger.Errorc(ctx, "HttpListener serve error: %v\n", err)

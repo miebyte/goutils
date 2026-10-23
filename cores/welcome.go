@@ -30,7 +30,7 @@ func (c *CoresService) welcome() {
 		)
 	}
 
-	for _, srv := range c.httpServers {
+	if srv := c.httpServer; srv != nil {
 		_, port, _ := net.SplitHostPort(srv.listener.Addr().String())
 		target := fmt.Sprintf("127.0.0.1:%s", port)
 

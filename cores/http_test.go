@@ -13,14 +13,15 @@ import (
 
 func TestHttpPortsAreIsolated(t *testing.T) {
 	addr := availableTestAddr(t)
-	running := startTestService(t, true,
+	running := startTestService(t,
 		WithPprof(),
 		WithSwagger(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, "swagger")
 		})),
-		WithHttpHandler(addr, "/api", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		WithServiceAddress(addr),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, r.URL.Path)
-		})),
+		})}),
 	)
 	client := &http.Client{Timeout: serviceTestTimeout}
 	t.Cleanup(client.CloseIdleConnections)
@@ -75,15 +76,17 @@ func assertHttpResponse(t *testing.T, addr, path string, status int, wantBody st
 	}
 }
 
-func TestRunHttpWithoutWorkers(t *testing.T) {
+func TestStartHttpWithoutWorkers(t *testing.T) {
 	addr := availableTestAddr(t)
 	service := NewCores(
+		WithInternalHTTPAddress("127.0.0.1:0"),
 		WithPprof(),
-		WithHttpHandler(addr, "/api", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		WithServiceAddress(addr),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, r.URL.Path)
-		})),
+		})}),
 	)
-	running := runTestService(t, service, "")
+	running := runTestService(t, service, true)
 	deadline := time.NewTimer(serviceTestTimeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -107,17 +110,18 @@ func TestRunHttpWithoutWorkers(t *testing.T) {
 	assertHttpResponse(t, addr, "/debug/pprof/", http.StatusNotFound, "")
 	service.cancel()
 	if err := running.wait(t); err != nil {
-		t.Fatalf("Run returned %v", err)
+		t.Fatalf("Start returned %v", err)
 	}
 	assertAddrReleased(t, addr)
 }
 
-func TestRunHttpOutlivesShortWorker(t *testing.T) {
+func TestStartHttpOutlivesShortWorker(t *testing.T) {
 	workerDone := make(chan struct{})
-	running := startTestService(t, false,
-		WithHttpHandler("127.0.0.1:0", "/api", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	running := startTestService(t,
+		WithServiceAddress("127.0.0.1:0"),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, "running")
-		})),
+		})}),
 		WithWorker(func(context.Context) error {
 			close(workerDone)
 			return nil
@@ -129,9 +133,7 @@ func TestRunHttpOutlivesShortWorker(t *testing.T) {
 		t.Fatal("short Worker did not finish")
 	}
 	assertHttpResponse(t, running.businessAddrs[0], "/api/", http.StatusOK, "running")
-	if running.httpAddr != "" {
-		t.Fatalf("Run opened an internal HTTP listener at %s", running.httpAddr)
-	}
+	assertHttpResponse(t, running.httpAddr, "/ready", http.StatusOK, "ok")
 	select {
 	case <-running.finished:
 		t.Fatalf("HTTP service exited when its short Workers finished: %v", running.err)
@@ -139,30 +141,29 @@ func TestRunHttpOutlivesShortWorker(t *testing.T) {
 	}
 }
 
-func TestRunHttpAndGrpc(t *testing.T) {
-	running := startTestService(t, false,
+func TestStartBusinessHttpAndGrpc(t *testing.T) {
+	running := startTestService(t,
 		WithPprof(),
-		WithGrpcServer("127.0.0.1:0", newHealthServer()),
-		WithHttpHandler("127.0.0.1:0", "/api", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		WithServiceAddress("127.0.0.1:0"),
+		WithGrpcServer(newHealthServer()),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, r.URL.Path)
-		})),
+		})}),
 	)
 	checkHealth(t, healthClient(t, running.grpcAddr))
 	assertHttpResponse(t, running.businessAddrs[0], "/api/hello", http.StatusOK, "/hello")
 	assertHttpResponse(t, running.businessAddrs[0], "/health_check", http.StatusNotFound, "")
 	assertHttpResponse(t, running.businessAddrs[0], "/debug/pprof/", http.StatusNotFound, "")
-	if running.httpAddr != "" {
-		t.Fatalf("Run opened an internal HTTP listener at %s", running.httpAddr)
-	}
+	assertHttpResponse(t, running.httpAddr, "/ready", http.StatusOK, "ok")
 }
 
 func TestHttpHandlersShareAddress(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, r.URL.Path)
 	})
-	running := startTestService(t, false,
-		WithHttpHandler("127.0.0.1:0", "first", handler),
-		WithHttpHandler("127.0.0.1:0", "/second/", handler),
+	running := startTestService(t,
+		WithServiceAddress("127.0.0.1:0"),
+		WithHttpHandler(HttpHandler{ApiPrefix: "first", Handler: handler}, HttpHandler{ApiPrefix: "/second/", Handler: handler}),
 	)
 	if len(running.businessAddrs) != 1 {
 		t.Fatalf("business listeners = %d, want 1 for handlers sharing an address", len(running.businessAddrs))
@@ -172,21 +173,29 @@ func TestHttpHandlersShareAddress(t *testing.T) {
 	}
 }
 
-func TestHttpHandlersUseSeparateAddresses(t *testing.T) {
+func TestHttpHandlersRejectConflictingServiceAddresses(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "running")
 	})
-	running := startTestService(t, false,
-		WithHttpHandler("127.0.0.1:0", "/first", handler),
-		WithHttpHandler(availableTestAddr(t), "/second", handler),
+	firstAddr, secondAddr, managementAddr := availableTestAddr(t), availableTestAddr(t), availableTestAddr(t)
+	workerStarted := false
+	service := NewCores(
+		WithInternalHTTPAddress(managementAddr),
+		WithServiceAddress(firstAddr),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/first", Handler: handler}),
+		WithServiceAddress(secondAddr),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/second", Handler: handler}),
+		WithWorker(func(context.Context) error { workerStarted = true; return nil }),
 	)
-	if len(running.businessAddrs) != 2 {
-		t.Fatalf("business listeners = %d, want 2", len(running.businessAddrs))
+	if err := Start(service); err == nil || !strings.Contains(err.Error(), "one business") {
+		t.Fatalf("Start returned %v, want single HTTP address error", err)
 	}
-	assertHttpResponse(t, running.businessAddrs[0], "/first/hello", http.StatusOK, "running")
-	assertHttpResponse(t, running.businessAddrs[0], "/second/hello", http.StatusNotFound, "")
-	assertHttpResponse(t, running.businessAddrs[1], "/second/hello", http.StatusOK, "running")
-	assertHttpResponse(t, running.businessAddrs[1], "/first/hello", http.StatusNotFound, "")
+	if workerStarted {
+		t.Fatal("Worker started with invalid HTTP configuration")
+	}
+	for _, addr := range []string{firstAddr, secondAddr, managementAddr} {
+		assertAddrReleased(t, addr)
+	}
 }
 
 func TestHttpConfigurationErrors(t *testing.T) {
@@ -200,61 +209,53 @@ func TestHttpConfigurationErrors(t *testing.T) {
 		{name: "empty address", handler: http.NotFoundHandler(), want: "address"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			err := Run(NewCores(WithHttpHandler(tt.addr, "/api", tt.handler)))
+			err := Start(NewCores(WithInternalHTTPAddress("127.0.0.1:0"), WithServiceAddress(tt.addr), WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: tt.handler})))
 			if err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.want) {
-				t.Fatalf("Run returned %v, want %s configuration error", err, tt.want)
+				t.Fatalf("Start returned %v, want %s configuration error", err, tt.want)
 			}
 		})
 	}
 }
 
 func TestHttpListenFailureRollsBackListeners(t *testing.T) {
-	for _, mode := range []string{"Run", "Start"} {
-		t.Run(mode, func(t *testing.T) {
-			occupied, err := net.Listen("tcp", "127.0.0.1:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer occupied.Close()
-			businessAddr := availableTestAddr(t)
-			internalAddr := availableTestAddr(t)
-			workerStarted := make(chan struct{}, 1)
-			service := NewCores(
-				WithHttpHandler(businessAddr, "/first", http.NotFoundHandler()),
-				WithHttpHandler(occupied.Addr().String(), "/second", http.NotFoundHandler()),
-				WithWorker(func(context.Context) error {
-					workerStarted <- struct{}{}
-					return nil
-				}),
-			)
-			if mode == "Run" {
-				err = Run(service)
-			} else {
-				err = Start(service, internalAddr)
-			}
-			if err == nil {
-				t.Fatalf("%s succeeded with an occupied business HTTP port", mode)
-			}
-			select {
-			case <-workerStarted:
-				t.Fatal("Worker ran before all listeners were bound")
-			default:
-			}
-			assertAddrReleased(t, businessAddr)
-			assertAddrReleased(t, internalAddr)
-		})
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer occupied.Close()
+	internalAddr := availableTestAddr(t)
+	workerStarted := make(chan struct{}, 1)
+	service := NewCores(
+		WithInternalHTTPAddress(internalAddr),
+		WithServiceAddress(occupied.Addr().String()),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/second", Handler: http.NotFoundHandler()}),
+		WithWorker(func(context.Context) error {
+			workerStarted <- struct{}{}
+			return nil
+		}),
+	)
+	if err := Start(service); err == nil {
+		t.Fatal("Start succeeded with an occupied business HTTP port")
+	}
+	select {
+	case <-workerStarted:
+		t.Fatal("Worker ran before all listeners were bound")
+	default:
+	}
+	assertAddrReleased(t, internalAddr)
 }
 
 func TestHttpShutdownWaitsForInFlightRequest(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	running := startTestService(t, false,
-		WithHttpHandler("127.0.0.1:0", "/api", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	running := startTestService(t,
+		WithServiceAddress("127.0.0.1:0"),
+		WithGrpcServer(newHealthServer()),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			close(started)
 			<-release
 			_, _ = io.WriteString(w, "done")
-		})),
+		})}),
 	)
 	defer close(release)
 	client := &http.Client{Timeout: serviceTestTimeout}
@@ -293,7 +294,7 @@ func TestHttpShutdownWaitsForInFlightRequest(t *testing.T) {
 		t.Fatal("HTTP request did not finish")
 	}
 	if err := running.wait(t); err != nil {
-		t.Fatalf("Run returned %v", err)
+		t.Fatalf("Start returned %v", err)
 	}
 	assertAddrReleased(t, running.businessAddrs[0])
 }
@@ -302,12 +303,14 @@ func TestHttpShutdownForcesLongRequestToStop(t *testing.T) {
 	oldMaxWait := defaultMaxWait
 	t.Cleanup(func() { defaultMaxWait = oldMaxWait })
 	started := make(chan struct{})
-	running := startTestService(t, false,
+	running := startTestService(t,
 		WithDefaultMaxWait(100*time.Millisecond),
-		WithHttpHandler("127.0.0.1:0", "/api", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		WithServiceAddress("127.0.0.1:0"),
+		WithGrpcServer(newHealthServer()),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 			close(started)
 			<-r.Context().Done()
-		})),
+		})}),
 	)
 	client := &http.Client{Timeout: serviceTestTimeout}
 	t.Cleanup(client.CloseIdleConnections)
@@ -327,7 +330,7 @@ func TestHttpShutdownForcesLongRequestToStop(t *testing.T) {
 	shutdownStarted := time.Now()
 	running.service.cancel()
 	if err := running.wait(t); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run returned %v, want shutdown deadline error", err)
+		t.Fatalf("Start returned %v, want shutdown deadline error", err)
 	}
 	if elapsed := time.Since(shutdownStarted); elapsed > 2*time.Second {
 		t.Fatalf("forced shutdown took %v", elapsed)

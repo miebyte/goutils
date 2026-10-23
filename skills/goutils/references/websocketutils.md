@@ -20,11 +20,14 @@ chat.On("send_message", func(c *websocketutils.Context) {
     _ = app.Send(c.Context(), req)
 })
 
-srv := cores.NewCores(cores.WithHttpHandler(":8080", "/ws", ws))
-logging.PanicError(cores.Run(srv))
+srv := cores.NewCores(
+    cores.WithServiceAddress(":8080"),
+    cores.WithHttpHandler(cores.HttpHandler{ApiPrefix: "/ws", Handler: ws}),
+)
+logging.PanicError(cores.Start(srv))
 ```
 
-上例监听业务端口 `:8080`，公开地址 `/ws/chat` 经 `cores.WithHttpHandler` 去掉 `/ws` 后，WebSocket Server 收到 `/chat`，因此进入 `chat` 命名空间。`WithNamespacePrefix` 是针对 Handler 实际收到的 URL Path；组合使用时根据最终路径测试，不要重复配置已被 cores 剥离的前缀，否则连接会落入 `default`。需要内部健康检查或 pprof 时，改用 `cores.Start(srv, "127.0.0.1:6060")`，内部端口与 WebSocket 业务端口独立。
+上例监听业务端口 `:8080`，公开地址 `/ws/chat` 经 `cores.WithHttpHandler` 去掉 `/ws` 后，WebSocket Server 收到 `/chat`，因此进入 `chat` 命名空间。`WithNamespacePrefix` 是针对 Handler 实际收到的 URL Path；组合使用时根据最终路径测试，不要重复配置已被 cores 剥离的前缀，否则连接会落入 `default`。`Start` 默认在独立管理端口 `:6060` 提供健康检查，pprof 需显式添加 `WithPprof()`；管理地址通过 `WithInternalHTTPAddress` 覆盖。
 
 ## Frame 与事件
 

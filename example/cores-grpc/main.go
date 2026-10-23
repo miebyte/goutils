@@ -13,9 +13,10 @@ import (
 )
 
 var (
-	grpcAddress     = flags.String("grpc-address", ":9000", "gRPC listen address")
-	httpAddress     = flags.String("http-address", "", "optional business HTTP listen address")
-	internalAddress = flags.String("internal-address", "", "optional internal HTTP listen address for health and pprof")
+	address         = flags.String("address", ":9000", "HTTP 与 gRPC 共用的业务监听地址")
+	httpEnabled     = flags.Bool("http", false, "同时在业务端口启用 HTTP 示例接口")
+	internalAddress = flags.String("internal-address", ":6060", "管理 HTTP 监听地址")
+	pprofEnabled    = flags.Bool("pprof", false, "在管理端口启用 pprof")
 )
 
 func main() {
@@ -25,26 +26,29 @@ func main() {
 	healthServer := health.NewServer()
 	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	healthpb.RegisterHealthServer(grpcServer, healthServer)
-	// Enable reflection so grpcurl can discover the health service in this example.
+	// 注册 reflection，便于通过 grpcurl 调用示例中的健康服务。
 	reflection.Register(grpcServer)
 
 	opts := []cores.ServiceOption{
-		cores.WithGrpcServer(grpcAddress(), grpcServer),
+		// 服务模式始终启动管理 HTTP，覆盖地址在构造阶段设置。
+		cores.WithInternalHTTPAddress(internalAddress()),
+		cores.WithServiceAddress(address()),
+		cores.WithGrpcServer(grpcServer),
 	}
-	if httpAddress() != "" {
-		opts = append(opts, cores.WithHttpHandler(httpAddress(), "/hello", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte("hello\n"))
-		})))
+	if httpEnabled() {
+		// HTTP 和 gRPC 使用统一业务地址，框架通过 cmux 按连接分流。
+		// 共享端口使用明文 HTTP/gRPC；需要 TLS 时应在入口代理终止 TLS。
+		opts = append(opts, cores.WithHttpHandler(cores.HttpHandler{
+			ApiPrefix: "/hello",
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte("hello\n"))
+			}),
+		}))
 	}
-	if internalAddress() != "" {
+	if pprofEnabled() {
 		opts = append(opts, cores.WithPprof())
 	}
 
 	srv := cores.NewCores(opts...)
-	if internalAddress() == "" {
-		logging.PanicError(cores.Run(srv))
-		return
-	}
-
-	logging.PanicError(cores.Start(srv, internalAddress()))
+	logging.PanicError(cores.Start(srv))
 }

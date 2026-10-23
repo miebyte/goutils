@@ -51,8 +51,8 @@ func (c *CoresService) shutdownServers() error {
 	defer cancel()
 
 	var grp errgroup.Group
-	for _, srv := range append([]*httpServer{c.internalHTTP}, c.httpServers...) {
-		if srv.server != nil {
+	for _, srv := range []*httpServer{c.internalHTTP, c.httpServer} {
+		if srv != nil && srv.server != nil {
 			grp.Go(func() error {
 				if err := srv.server.Shutdown(ctx); err != nil {
 					_ = srv.server.Close()
@@ -81,5 +81,12 @@ func (c *CoresService) shutdownServers() error {
 			}
 		})
 	}
-	return grp.Wait()
+	err := grp.Wait()
+	if c.cmux != nil {
+		// 停止协议分流和底层 Accept；未完成识别的连接由读取超时结束。
+		// HTTP/gRPC 的在途连接继续使用各自原生的排空逻辑，无需额外记录连接。
+		c.cmux.Close()
+		_ = c.businessListener.Close()
+	}
+	return err
 }

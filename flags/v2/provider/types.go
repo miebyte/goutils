@@ -33,6 +33,7 @@ type ConfigProvider interface {
 	ConfigReader
 	ConfigWatcher
 	Path(string) string
-	// Close 结束所有监听、关闭事件通道并释放连接，重复调用安全。
+	// Close 结束当前 provider 的监听并关闭事件通道，重复调用安全。
+	// 使用公共 client 时不关闭连接池，避免影响服务注册等其他使用方。
 	Close() error
 }

@@ -28,14 +28,14 @@ type testService struct {
 	businessAddrs []string
 }
 
-func runTestService(t *testing.T, service *CoresService, httpAddr string) *testService {
+func runTestService(t *testing.T, service *CoresService, serviceMode bool) *testService {
 	t.Helper()
 	running := &testService{service: service, finished: make(chan struct{})}
 	go func() {
-		if httpAddr == "" {
+		if !serviceMode {
 			running.err = Run(service)
 		} else {
-			running.err = Start(service, httpAddr)
+			running.err = Start(service)
 		}
 		close(running.finished)
 	}()
@@ -46,7 +46,7 @@ func runTestService(t *testing.T, service *CoresService, httpAddr string) *testS
 	return running
 }
 
-func startTestService(t *testing.T, mixed bool, opts ...ServiceOption) *testService {
+func startTestService(t *testing.T, opts ...ServiceOption) *testService {
 	t.Helper()
 	type addresses struct {
 		grpc, http string
@@ -64,18 +64,15 @@ func startTestService(t *testing.T, mixed bool, opts ...ServiceOption) *testServ
 		if service.internalHTTP.listener != nil {
 			addr.http = service.internalHTTP.listener.Addr().String()
 		}
-		for _, server := range service.httpServers {
-			addr.business = append(addr.business, server.listener.Addr().String())
+		if service.httpServer != nil {
+			addr.business = append(addr.business, service.httpServer.listener.Addr().String())
 		}
 		ready <- addr
 		return nil
 	}))
+	opts = append([]ServiceOption{WithInternalHTTPAddress("127.0.0.1:0")}, opts...)
 	service = NewCores(opts...)
-	httpAddr := ""
-	if mixed {
-		httpAddr = "127.0.0.1:0"
-	}
-	running := runTestService(t, service, httpAddr)
+	running := runTestService(t, service, true)
 	select {
 	case addr := <-ready:
 		running.grpcAddr, running.httpAddr = addr.grpc, addr.http
@@ -150,10 +147,10 @@ func assertAddrReleased(t *testing.T, addr string) {
 	_ = listener.Close()
 }
 
-func TestRunGrpcWithoutWorkers(t *testing.T) {
+func TestStartGrpcWithoutWorkers(t *testing.T) {
 	addr := availableTestAddr(t)
-	service := NewCores(WithGrpcServer(addr, newHealthServer()))
-	running := runTestService(t, service, "")
+	service := NewCores(WithInternalHTTPAddress("127.0.0.1:0"), WithServiceAddress(addr), WithGrpcServer(newHealthServer()))
+	running := runTestService(t, service, true)
 	checkHealth(t, healthClient(t, addr))
 	select {
 	case <-running.finished:
@@ -162,15 +159,16 @@ func TestRunGrpcWithoutWorkers(t *testing.T) {
 	}
 	service.cancel()
 	if err := running.wait(t); err != nil {
-		t.Fatalf("Run returned %v", err)
+		t.Fatalf("Start returned %v", err)
 	}
 	assertAddrReleased(t, addr)
 }
 
-func TestRunGrpcOutlivesShortWorker(t *testing.T) {
+func TestStartGrpcOutlivesShortWorker(t *testing.T) {
 	workerDone := make(chan struct{})
-	running := startTestService(t, false,
-		WithGrpcServer("127.0.0.1:0", newHealthServer()),
+	running := startTestService(t,
+		WithServiceAddress("127.0.0.1:0"),
+		WithGrpcServer(newHealthServer()),
 		WithWorker(func(context.Context) error {
 			close(workerDone)
 			return nil
@@ -189,17 +187,21 @@ func TestRunGrpcOutlivesShortWorker(t *testing.T) {
 	}
 	running.service.cancel()
 	if err := running.wait(t); err != nil {
-		t.Fatalf("Run returned %v", err)
+		t.Fatalf("Start returned %v", err)
 	}
 }
 
 func TestStartHttpAndGrpc(t *testing.T) {
-	running := startTestService(t, true,
-		WithGrpcServer("127.0.0.1:0", newHealthServer()),
-		WithHttpHandler("127.0.0.1:0", "/api", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	running := startTestService(t,
+		WithServiceAddress("127.0.0.1:0"),
+		WithGrpcServer(newHealthServer()),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, r.URL.Path)
-		})),
+		})}),
 	)
+	if running.grpcAddr != running.businessAddrs[0] || running.grpcAddr == running.httpAddr {
+		t.Fatalf("business addresses = %s / %s, management = %s", running.grpcAddr, running.businessAddrs[0], running.httpAddr)
+	}
 	checkHealth(t, healthClient(t, running.grpcAddr))
 	client := &http.Client{Timeout: serviceTestTimeout}
 	t.Cleanup(client.CloseIdleConnections)
@@ -244,9 +246,9 @@ func TestGrpcConfigurationErrors(t *testing.T) {
 		{name: "empty address", server: grpc.NewServer(), want: "address"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			err := Run(NewCores(WithGrpcServer(tt.addr, tt.server)))
+			err := Start(NewCores(WithInternalHTTPAddress("127.0.0.1:0"), WithServiceAddress(tt.addr), WithGrpcServer(tt.server)))
 			if err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.want) {
-				t.Fatalf("Run returned %v, want %s configuration error", err, tt.want)
+				t.Fatalf("Start returned %v, want %s configuration error", err, tt.want)
 			}
 		})
 	}
@@ -259,17 +261,18 @@ func TestGrpcListenFailureRollsBackHttp(t *testing.T) {
 	}
 	defer occupied.Close()
 	httpAddr := availableTestAddr(t)
-	businessAddr := availableTestAddr(t)
 	workerStarted := make(chan struct{}, 1)
 	service := NewCores(
-		WithGrpcServer(occupied.Addr().String(), newHealthServer()),
-		WithHttpHandler(businessAddr, "/api", http.NotFoundHandler()),
+		WithInternalHTTPAddress(httpAddr),
+		WithServiceAddress(occupied.Addr().String()),
+		WithGrpcServer(newHealthServer()),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.NotFoundHandler()}),
 		WithWorker(func(context.Context) error {
 			workerStarted <- struct{}{}
 			return nil
 		}),
 	)
-	if err := Start(service, httpAddr); err == nil {
+	if err := Start(service); err == nil {
 		t.Fatal("Start succeeded with an occupied gRPC port")
 	}
 	select {
@@ -278,17 +281,16 @@ func TestGrpcListenFailureRollsBackHttp(t *testing.T) {
 	default:
 	}
 	assertAddrReleased(t, httpAddr)
-	assertAddrReleased(t, businessAddr)
 }
 
 func TestServeErrorStopsHttpGrpcAndWorkers(t *testing.T) {
 	for _, protocol := range []string{"grpc", "internal http", "business http"} {
 		t.Run(protocol, func(t *testing.T) {
 			workerStopped := make(chan struct{})
-			running := startTestService(t, true,
-				WithGrpcServer("127.0.0.1:0", newHealthServer()),
-				WithHttpHandler("127.0.0.1:0", "/api", http.NotFoundHandler()),
-				WithHttpHandler(availableTestAddr(t), "/other", http.NotFoundHandler()),
+			running := startTestService(t,
+				WithServiceAddress("127.0.0.1:0"),
+				WithGrpcServer(newHealthServer()),
+				WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.NotFoundHandler()}),
 				WithWorker(func(ctx context.Context) error {
 					<-ctx.Done()
 					close(workerStopped)
@@ -300,7 +302,7 @@ func TestServeErrorStopsHttpGrpcAndWorkers(t *testing.T) {
 			if protocol == "internal http" {
 				listener = running.service.internalHTTP.listener
 			} else if protocol == "business http" {
-				listener = running.service.httpServers[0].listener
+				listener = running.service.httpServer.listener
 			}
 			if err := listener.Close(); err != nil {
 				t.Fatal(err)
@@ -325,9 +327,10 @@ func TestServeErrorStopsHttpGrpcAndWorkers(t *testing.T) {
 func TestWorkerErrorStopsHttpAndGrpc(t *testing.T) {
 	fail := make(chan struct{})
 	wantErr := errors.New("worker failed")
-	running := startTestService(t, true,
-		WithGrpcServer("127.0.0.1:0", newHealthServer()),
-		WithHttpHandler("127.0.0.1:0", "/api", http.NotFoundHandler()),
+	running := startTestService(t,
+		WithServiceAddress("127.0.0.1:0"),
+		WithGrpcServer(newHealthServer()),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.NotFoundHandler()}),
 		WithWorker(func(context.Context) error {
 			<-fail
 			return wantErr
@@ -371,7 +374,11 @@ func TestGrpcShutdownWaitsForInFlightRPC(t *testing.T) {
 	healthServer := &blockingHealthServer{started: make(chan struct{}), release: make(chan struct{})}
 	server := grpc.NewServer()
 	healthpb.RegisterHealthServer(server, healthServer)
-	running := startTestService(t, false, WithGrpcServer("127.0.0.1:0", server))
+	running := startTestService(t,
+		WithServiceAddress("127.0.0.1:0"),
+		WithGrpcServer(server),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.NotFoundHandler()}),
+	)
 	client := healthClient(t, running.grpcAddr)
 	ctx, cancel := context.WithTimeout(context.Background(), serviceTestTimeout)
 	defer cancel()
@@ -401,7 +408,7 @@ func TestGrpcShutdownWaitsForInFlightRPC(t *testing.T) {
 		t.Fatal("RPC did not finish")
 	}
 	if err := running.wait(t); err != nil {
-		t.Fatalf("Run returned %v", err)
+		t.Fatalf("Start returned %v", err)
 	}
 }
 
@@ -410,9 +417,11 @@ func TestGrpcShutdownForcesLongStreamToStop(t *testing.T) {
 	t.Cleanup(func() { defaultMaxWait = oldMaxWait })
 	server := grpc.NewServer()
 	healthpb.RegisterHealthServer(server, &blockingHealthServer{})
-	running := startTestService(t, false,
+	running := startTestService(t,
 		WithDefaultMaxWait(100*time.Millisecond),
-		WithGrpcServer("127.0.0.1:0", server),
+		WithServiceAddress("127.0.0.1:0"),
+		WithGrpcServer(server),
+		WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.NotFoundHandler()}),
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), serviceTestTimeout)
 	defer cancel()
@@ -426,7 +435,7 @@ func TestGrpcShutdownForcesLongStreamToStop(t *testing.T) {
 	started := time.Now()
 	running.service.cancel()
 	if err := running.wait(t); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run returned %v, want shutdown deadline error", err)
+		t.Fatalf("Start returned %v, want shutdown deadline error", err)
 	}
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("forced shutdown took %v", elapsed)
@@ -467,9 +476,11 @@ func TestGrpcShutdownBoundsUncooperativeHandler(t *testing.T) {
 			fail := make(chan struct{})
 			workerContexts := make(chan context.Context, 1)
 			workerErr := errors.New("worker failed")
-			running := startTestService(t, false,
+			running := startTestService(t,
 				WithDefaultMaxWait(100*time.Millisecond),
-				WithGrpcServer("127.0.0.1:0", server),
+				WithServiceAddress("127.0.0.1:0"),
+				WithGrpcServer(server),
+				WithHttpHandler(HttpHandler{ApiPrefix: "/api", Handler: http.NotFoundHandler()}),
 				WithWorker(func(context.Context) error {
 					<-fail
 					return workerErr
@@ -526,13 +537,13 @@ func TestGrpcShutdownBoundsUncooperativeHandler(t *testing.T) {
 			select {
 			case <-running.finished:
 				if !errors.Is(running.err, context.DeadlineExceeded) {
-					t.Errorf("Run returned %v, want shutdown deadline error", running.err)
+					t.Errorf("Start returned %v, want shutdown deadline error", running.err)
 				}
 				if !errors.Is(running.err, workerErr) {
-					t.Errorf("Run returned %v, want Worker error", running.err)
+					t.Errorf("Start returned %v, want Worker error", running.err)
 				}
 			case <-time.After(500 * time.Millisecond):
-				t.Fatal("Run did not return at its shutdown deadline while the handler remained blocked")
+				t.Fatal("Start did not return at its shutdown deadline while the handler remained blocked")
 			}
 		})
 	}

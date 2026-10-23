@@ -133,5 +133,5 @@ func (sf *SuperFlags) Close() error {
 	return sf.closeErr
 }
 
-// Close 释放 Parse 使用的配置连接和监听。
+// Close 停止 Parse 使用的配置监听，不关闭公共 Consul client。
 func Close() error { return sf.Close() }

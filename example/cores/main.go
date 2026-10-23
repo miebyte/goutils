@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -40,7 +41,7 @@ type ExtraConfig struct {
 
 var (
 	port            = flags.Int("port", 8080, "HTTP port")
-	internalAddress = flags.String("internal-address", "127.0.0.1:6060", "internal HTTP listen address")
+	internalAddress = flags.String("internal-address", ":6060", "管理 HTTP 监听地址")
 	configFlag      = flags.Struct("config", (*Config)(nil), "server config")
 	extraConfFlag   = flags.Struct("extra", (*ExtraConfig)(nil), "extra config")
 )
@@ -69,8 +70,17 @@ func main() {
 	})
 
 	srv := cores.NewCores(
+		// 管理端口默认使用 :6060；本地同时启动多个服务时可分别覆盖。
+		cores.WithInternalHTTPAddress(internalAddress()),
 		cores.WithPprof(),
-		cores.WithHttpHandler(fmt.Sprintf(":%d", port()), "/", app),
+		cores.WithServiceAddress(fmt.Sprintf(":%d", port())),
+		// 多个路由组共享一个业务端口，挂载前缀在进入 Handler 前会被移除。
+		cores.WithHttpHandler(
+			cores.HttpHandler{ApiPrefix: "/api", Handler: app},
+			cores.HttpHandler{ApiPrefix: "/other", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = fmt.Fprintln(w, "other handler")
+			})},
+		),
 		cores.WithWorker(func(ctx context.Context) error {
 			ticket := time.NewTicker(time.Second * 3)
 			defer ticket.Stop()
@@ -87,5 +97,5 @@ func main() {
 			}
 		}),
 	)
-	logging.PanicError(cores.Start(srv, internalAddress()))
+	logging.PanicError(cores.Start(srv))
 }

@@ -76,7 +76,7 @@ func supplyDefaultConfig(config *RegistrationConfig) error {
 	return nil
 }
 
-// NewRegistration 根据部署身份生成稳定的实例 ID；本地进程使用独立 UUID。
+// NewRegistration 在集群中用命名空间、Pod 名和业务端口生成实例 ID；本地进程使用独立 UUID。
 // serviceName 来自进程服务名，businessAddress 和 managementAddress 使用已绑定的监听地址。
 // 健康检查固定使用当前实例的管理端口和 /ready，不跟随注册地址覆盖。
 func NewRegistration(serviceName string, businessAddress string, managementAddress string, config RegistrationConfig) (*Registration, error) {
@@ -102,7 +102,7 @@ func NewRegistration(serviceName string, businessAddress string, managementAddre
 
 	// 尝试获取 k8s 集群的环境变量
 	namespace := strings.TrimSpace(os.Getenv("POD_NAMESPACE"))
-	podUID := strings.TrimSpace(os.Getenv("POD_UID"))
+	podName := strings.TrimSpace(os.Getenv("POD_NAME"))
 	podIP := strings.TrimSpace(os.Getenv("POD_IP"))
 
 	// 复制一份元信息
@@ -111,14 +111,14 @@ func NewRegistration(serviceName string, businessAddress string, managementAddre
 	// 默认使用 127.0.0.1 作为服务地址和检查主机
 	address, checkHost := "127.0.0.1", "127.0.0.1"
 
-	// 生成一个唯一的实例 ID
-	instanceID := uuid.NewString()
+	// 本地进程通过独立 UUID 区分，即使服务名和端口相同也不会覆盖彼此。
+	id := fmt.Sprintf("%s-%d-%s", serviceName, businessPort, uuid.NewString())
 
 	// 任何一个集群环境变量被设置，都认为在 k8s 集群中运行
 	// 但是必须三个变量同时被设置才会允许继续注册
-	if namespace != "" || podUID != "" || podIP != "" {
-		if namespace == "" || podUID == "" || podIP == "" {
-			return nil, errors.New("POD_NAMESPACE, POD_UID and POD_IP must all be set in Kubernetes")
+	if namespace != "" || podName != "" || podIP != "" {
+		if namespace == "" || podName == "" || podIP == "" {
+			return nil, errors.New("POD_NAMESPACE, POD_NAME and POD_IP must all be set in Kubernetes")
 		}
 
 		if net.ParseIP(podIP) == nil {
@@ -129,18 +129,19 @@ func NewRegistration(serviceName string, businessAddress string, managementAddre
 			return nil, errors.New("Kubernetes namespace and service name must be valid DNS labels")
 		}
 
-		if strings.ContainsAny(podUID, "/?# \t\r\n") {
-			return nil, errors.New("POD_UID must not contain URL separators or spaces")
+		if strings.ContainsAny(podName, "/?# \t\r\n") {
+			return nil, errors.New("POD_NAME must not contain URL separators or spaces")
 		}
 		// 集群内统一按进程服务名和标准集群域生成地址，健康检查始终指向当前 Pod。
 		address = serviceName + "." + namespace + ".svc.cluster.local"
 		checkHost = podIP
-		instanceID = namespace + "-" + podUID
+		// 服务名仍用于服务发现；实例 ID 单独区分命名空间、Pod 和业务端口。
+		id = fmt.Sprintf("%s-%s-%d", namespace, podName, businessPort)
 		if meta == nil {
 			meta = make(map[string]string)
 		}
 		meta["namespace"] = namespace
-		meta["pod_uid"] = podUID
+		meta["pod_name"] = podName
 	}
 
 	// 如果显式覆盖了服务地址，则使用覆盖的地址
@@ -160,7 +161,6 @@ func NewRegistration(serviceName string, businessAddress string, managementAddre
 		}
 	}
 
-	id := fmt.Sprintf("%s-%d-%s", serviceName, businessPort, instanceID)
 	return &Registration{
 		client:         config.Client,
 		requestTimeout: config.RequestTimeout,

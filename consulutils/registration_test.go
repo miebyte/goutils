@@ -101,7 +101,7 @@ func registrationClient(t *testing.T, handler http.Handler) *api.Client {
 func localRegistrationConfig(t *testing.T, client *api.Client) RegistrationConfig {
 	t.Helper()
 	t.Setenv("POD_NAMESPACE", "")
-	t.Setenv("POD_UID", "")
+	t.Setenv("POD_NAME", "")
 	t.Setenv("POD_IP", "")
 	return RegistrationConfig{
 		Client:        client,
@@ -236,6 +236,7 @@ func TestRegistrationAddressesAndInstanceIDs(t *testing.T) {
 	second, err := NewRegistration("orders", ":8080", "127.0.0.1:6060", config)
 	require.NoError(t, err)
 	require.NotEqual(t, first.service.ID, second.service.ID)
+	require.True(t, strings.HasPrefix(first.service.ID, "orders-8080-"), "本地实例继续使用服务名、端口和独立 UUID")
 	require.Equal(t, "127.0.0.1", first.service.Address)
 	require.Equal(t, "http://127.0.0.1:6060/ready", first.service.Check.HTTP)
 	require.Equal(t, "10s", first.service.Check.Interval)
@@ -244,29 +245,41 @@ func TestRegistrationAddressesAndInstanceIDs(t *testing.T) {
 	require.Empty(t, first.service.Meta)
 
 	t.Setenv("POD_NAMESPACE", "shop")
-	t.Setenv("POD_UID", "pod-one")
+	t.Setenv("POD_NAME", "orders-65fd77bb5f-abcde")
 	t.Setenv("POD_IP", "10.0.0.8")
 	first, err = NewRegistration("orders", ":8080", "[::]:6060", config)
 	require.NoError(t, err)
 	require.Equal(t, "orders", first.service.Name)
+	require.Equal(t, "shop-orders-65fd77bb5f-abcde-8080", first.service.ID)
+	require.Equal(t, "service:"+first.service.ID, first.service.Check.CheckID)
 	require.Equal(t, "orders.shop.svc.cluster.local", first.service.Address)
 	require.Equal(t, 8080, first.service.Port)
-	config.Meta = map[string]string{"namespace": "wrong", "pod_uid": "wrong", "team": "shop"}
+	config.Meta = map[string]string{"namespace": "wrong", "pod_name": "wrong", "team": "shop"}
 	first, err = NewRegistration("orders", ":80", "[::]:16060", config)
 	require.NoError(t, err)
+	require.Equal(t, "shop-orders-65fd77bb5f-abcde-80", first.service.ID, "业务端口也参与区分实例")
 	require.Equal(t, "orders.shop.svc.cluster.local", first.service.Address)
 	require.Equal(t, 80, first.service.Port)
 	require.Equal(t, "http://10.0.0.8:16060/ready", first.service.Check.HTTP)
-	require.Equal(t, map[string]string{"namespace": "shop", "pod_uid": "pod-one", "team": "shop"}, first.service.Meta)
+	require.Equal(t, map[string]string{"namespace": "shop", "pod_name": "orders-65fd77bb5f-abcde", "team": "shop"}, first.service.Meta)
 	require.Equal(t, "wrong", config.Meta["namespace"], "不能修改调用方的配置映射")
+	require.Equal(t, "wrong", config.Meta["pod_name"], "不能修改调用方的 Pod 名元数据")
 	second, err = NewRegistration("orders", ":80", "[::]:16060", config)
 	require.NoError(t, err)
 	require.Equal(t, first.service.ID, second.service.ID)
-	t.Setenv("POD_UID", "pod-two")
+	t.Setenv("POD_NAME", "orders-65fd77bb5f-fghij")
 	second, err = NewRegistration("orders", ":80", "[::]:16060", config)
 	require.NoError(t, err)
+	require.Equal(t, "shop-orders-65fd77bb5f-fghij-80", second.service.ID)
 	require.NotEqual(t, first.service.ID, second.service.ID)
+	require.Equal(t, first.service.Name, second.service.Name, "不同 Pod 仍属于同一个逻辑服务")
 	require.Equal(t, first.service.Address, second.service.Address)
+
+	t.Setenv("POD_NAMESPACE", "prod")
+	first, err = NewRegistration("orders", ":80", ":16060", config)
+	require.NoError(t, err)
+	require.Equal(t, "prod-orders-65fd77bb5f-fghij-80", first.service.ID, "同名 Pod 在不同命名空间不能覆盖彼此")
+	require.NotEqual(t, second.service.ID, first.service.ID)
 
 	config.ServiceAddress = "entry.example"
 	t.Setenv("POD_IP", "2001:db8::1")
@@ -297,14 +310,28 @@ func TestRegistrationRequiresServiceIdentity(t *testing.T) {
 
 func TestRegistrationRejectsIncompleteKubernetesIdentity(t *testing.T) {
 	config := localRegistrationConfig(t, registrationClient(t, &registrationAgent{}))
-	for _, missing := range []string{"POD_NAMESPACE", "POD_UID", "POD_IP"} {
+	for _, missing := range []string{"POD_NAMESPACE", "POD_NAME", "POD_IP"} {
 		t.Run(missing, func(t *testing.T) {
 			t.Setenv("POD_NAMESPACE", "shop")
-			t.Setenv("POD_UID", "pod-one")
+			t.Setenv("POD_NAME", "orders-65fd77bb5f-abcde")
 			t.Setenv("POD_IP", "10.0.0.8")
 			t.Setenv(missing, "")
 			_, err := NewRegistration("orders", ":8080", ":6060", config)
 			require.ErrorContains(t, err, "must all be set")
+		})
+	}
+}
+
+func TestRegistrationRejectsInvalidPodName(t *testing.T) {
+	config := localRegistrationConfig(t, registrationClient(t, &registrationAgent{}))
+	t.Setenv("POD_NAMESPACE", "shop")
+	t.Setenv("POD_IP", "10.0.0.8")
+	// 实例 ID 会用于 Consul 请求路径，不能包含 URL 分隔符或内部空白。
+	for _, name := range []string{"orders/pod", "orders?pod", "orders#pod", "orders pod"} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("POD_NAME", name)
+			_, err := NewRegistration("orders", ":8080", ":6060", config)
+			require.ErrorContains(t, err, "POD_NAME must not contain")
 		})
 	}
 }

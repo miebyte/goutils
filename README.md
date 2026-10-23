@@ -32,7 +32,7 @@ flags.Parse(flags.WithRemoteConfig())
 
 `cores.WithConsulRegister()` 可直接无参启用，服务名取进程当前服务名，注册端口取唯一业务 Listener 的实际端口；只需在覆盖 Client 等可选参数时传入一份注册配置。Kubernetes Service 的 `port` 需要与该业务端口一致。
 
-集群通过部署注入的 `POD_NAMESPACE`、`POD_UID`、`POD_IP` 识别：注册 Kubernetes Service 域名，使用 Pod UID 区分实例，健康检查指向当前 Pod IP 的管理端口。本地默认注册 `127.0.0.1` 和业务端口，同机运行多个服务时需分别设置管理端口。
+集群通过部署注入的 `POD_NAMESPACE`、`POD_NAME`、`POD_IP` 识别，三者必须同时提供：注册 Kubernetes Service 域名，Consul `Name` 仍取 `share` 服务名，实例 ID 固定为 `namespace-podName-businessPort`，不额外添加逻辑服务名前缀。健康检查指向当前 Pod IP 的管理端口。本地默认注册 `127.0.0.1` 和业务端口，实例 ID 规则保持不变；同机运行多个服务时需分别设置管理端口。
 
 - [注册、共享连接与 Kubernetes 部署配置](consulutils/README.md)
 - [配置读取与 Watch](flags/v2/README.md)

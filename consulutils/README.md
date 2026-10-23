@@ -52,7 +52,7 @@ cores.WithConsulRegister(consulutils.RegistrationConfig{
 | --- | --- |
 | `Client` | 可选；省略使用公共 Client |
 | `ServiceAddress` | 显式覆盖注册地址的 host，不含 scheme 或端口 |
-| `Tags` / `Meta` | 注册标签及元数据；集群自动记录 `namespace`、`pod_uid` |
+| `Tags` / `Meta` | 注册标签及元数据；集群自动记录 `namespace`、`pod_name` |
 | `RequestTimeout` | 单次 Consul 请求超时，默认 3 秒 |
 | `RetryInterval` | 重试起始间隔及成功后的确认间隔，默认 5 秒 |
 | `CheckInterval` | Consul HTTP 检查间隔，默认 10 秒 |
@@ -71,10 +71,10 @@ env:
     valueFrom:
       fieldRef:
         fieldPath: metadata.namespace
-  - name: POD_UID
+  - name: POD_NAME
     valueFrom:
       fieldRef:
-        fieldPath: metadata.uid
+        fieldPath: metadata.name
   - name: POD_IP
     valueFrom:
       fieldRef:
@@ -91,18 +91,20 @@ livenessProbe:
     port: 6060
 ```
 
-以上是容器配置片段，`CONSUL_HTTP_ADDR` 必须按实际部署提供稳定 Agent 地址，示例 localhost 仅适用于同 Pod Agent。三个 Pod 环境变量全部缺省时按本地环境处理，全部存在且有效时才按集群处理；部分存在时停用注册并记录错误，避免将 `127.0.0.1` 错误注册到集群。默认管理服务监听 `:6060`，kubelet 和 Consul Agent 必须能访问 Pod IP 的该端口。环境变量来源见 [Kubernetes Downward API](https://kubernetes.io/docs/concepts/workloads/pods/downward-api/)。
+以上是容器配置片段，`CONSUL_HTTP_ADDR` 必须按实际部署提供稳定 Agent 地址，示例 localhost 仅适用于同 Pod Agent。集群中 `POD_NAMESPACE`、`POD_NAME`、`POD_IP` 必须同时提供；三者全部缺省时按本地环境处理，全部存在且有效时才按集群处理，部分存在时停用注册并记录错误，避免将 `127.0.0.1` 错误注册到集群。默认管理服务监听 `:6060`，kubelet 和 Consul Agent 必须能访问 Pod IP 的该端口。环境变量来源见 [Kubernetes Downward API](https://kubernetes.io/docs/concepts/workloads/pods/downward-api/)。
 
-例如 namespace 为 `test`、Service 名为 `orders`、Service 端口为 `8080` 时：
+例如 namespace 为 `test`、Pod 名为 `orders-65fd77bb5f-abcde`、Service 名为 `orders`、业务端口为 `8080` 时：
 
 | 内容 | 结果 |
 | --- | --- |
 | Consul 服务名 | `orders` |
 | 注册地址 | `orders.test.svc.cluster.local:8080` |
-| 实例区分 | 实例 ID 包含当前 Pod UID，不同 Pod 不覆盖彼此 |
+| 实例 ID | `test-orders-65fd77bb5f-abcde-8080` |
 | HTTP 健康检查 | `http://<当前 Pod IP>:6060/ready` |
 
 集群默认注册地址固定按 `{进程服务名}.{namespace}.svc.cluster.local` 生成，Kubernetes Service 名沿用进程服务名，集群域固定为 `cluster.local`；需要显式指定其他注册地址时，可使用 `ServiceAddress`。多个 Pod 注册相同 Service 域名，并使用各自 Pod IP 检查自身状态；调用流量仍由 Kubernetes Service 分配到后端 Pod。业务端口由实际 Listener 推导，不单独覆盖。
+
+集群 Consul `Name` 仍使用 `share.GetServiceName()`，实例 ID 固定为 `namespace-podName-businessPort`，不额外添加逻辑服务名前缀。不同 Pod 名区分不同实例；同一 namespace 下同名 Pod 以相同业务端口重建时会复用该 ID。本地实例 ID 规则保持不变。
 
 同一个 Consul 中不同 namespace 的同名服务仍属于同一个逻辑服务名。发现端需要按 `namespace` 元数据或应用约定的环境标签筛选；唯一实例 ID 只解决记录覆盖问题，不自动隔离环境。通过 Consul 得到域名后，调用方仍需要能解析并访问该集群域名。
 

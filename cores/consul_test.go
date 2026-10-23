@@ -34,7 +34,7 @@ func testConsulClient(t *testing.T, handler http.Handler) *consulapi.Client {
 
 func clearPodEnvironment(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"POD_NAMESPACE", "POD_UID", "POD_IP"} {
+	for _, name := range []string{"POD_NAMESPACE", "POD_NAME", "POD_IP"} {
 		t.Setenv(name, "")
 	}
 }

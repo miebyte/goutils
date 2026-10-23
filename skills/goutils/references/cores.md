@@ -138,7 +138,7 @@ logging.PanicError(cores.Start(srv))
 
 默认复用 `consulutils.DefaultClient()`，与 `flags/v2` 的配置读取和 Watch 共用同一个官方 SDK Client 和 HTTP 连接池。自定义 Client 时，同时传给 `flags.WithRemoteConsulProvider(client)` 和 `RegistrationConfig.Client`。关闭配置 Watch 不关闭注册器；注册失败策略不改变远程配置初始化失败时的行为。
 
-集群通过 `POD_NAMESPACE`、`POD_UID`、`POD_IP` 三个环境变量识别，必须全部提供。默认注册地址固定按 `{进程服务名}.{namespace}.svc.cluster.local` 生成，Kubernetes Service 名沿用进程服务名，集群域固定为 `cluster.local`；显式 `ServiceAddress` 仍可覆盖注册地址。端口使用业务实际监听端口，因此 Kubernetes Service 的 `port` 必须与其一致；实例 ID 包含 Pod UID。健康检查固定指向 `http://{POD_IP}:{管理端口}/ready`，本地则固定使用 `127.0.0.1`，不支持单独覆盖检查 host；Consul 必须能访问自动生成的检查地址。
+集群通过 `POD_NAMESPACE`、`POD_NAME`、`POD_IP` 三个环境变量识别，必须全部提供。默认注册地址固定按 `{进程服务名}.{namespace}.svc.cluster.local` 生成，Kubernetes Service 名沿用进程服务名，集群域固定为 `cluster.local`；显式 `ServiceAddress` 仍可覆盖注册地址。端口使用业务实际监听端口，因此 Kubernetes Service 的 `port` 必须与其一致。Consul `Name` 仍取 `share.GetServiceName()`，集群实例 ID 固定为 `namespace-podName-businessPort`，不额外添加逻辑服务名前缀；例如 `test-orders-65fd77bb5f-abcde-8080`，同 namespace、同 Pod 名和业务端口重建时复用该 ID。健康检查固定指向 `http://{POD_IP}:{管理端口}/ready`，本地则固定使用 `127.0.0.1`，不支持单独覆盖检查 host；Consul 必须能访问自动生成的检查地址。
 
 本地默认注册 `127.0.0.1` 和业务实际监听端口，使用进程实例 ID 区分多次启动；Consul 必须能访问该实例的管理 HTTP。字段说明和 Downward API 配置见仓库 [consulutils/README.md](../../../consulutils/README.md)，可运行的组合示例见 `example/cores-consul`。
 

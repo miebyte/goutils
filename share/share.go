@@ -68,3 +68,7 @@ func GetServiceName() string {
 	}
 	return buildinfo.ServiceName
 }
+
+func GetVersion() string {
+	return buildinfo.Version
+}

@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -18,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hashicorp/consul/api"
 	"github.com/miebyte/goutils/internal/innerlog"
+	"github.com/miebyte/goutils/share"
 )
 
 // RegistrationConfig 配置服务入口及当前实例的健康检查。
@@ -161,6 +161,9 @@ func NewRegistration(serviceName string, businessAddress string, managementAddre
 		}
 	}
 
+	tags := []string{share.GetVersion()}
+	tags = append(tags, config.Tags...)
+
 	return &Registration{
 		client:         config.Client,
 		requestTimeout: config.RequestTimeout,
@@ -170,7 +173,7 @@ func NewRegistration(serviceName string, businessAddress string, managementAddre
 			Name:    serviceName,
 			Address: address,
 			Port:    businessPort,
-			Tags:    slices.Clone(config.Tags),
+			Tags:    tags,
 			Meta:    meta,
 			Check: &api.AgentServiceCheck{
 				CheckID:                        "service:" + id,

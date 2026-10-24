@@ -41,18 +41,6 @@ func (c *CoresService) startConsulRegistration() func() {
 		return nil
 	}
 
-	// 解析业务监听器的端口
-	// _, portText, err := net.SplitHostPort(c.businessListener.Addr().String())
-	// if err != nil {
-	// 	innerlog.Logger.Warnc(c.ctx, "Consul registration disabled: invalid business listener address: %v", err)
-	// 	return nil
-	// }
-	// port, err := strconv.Atoi(portText)
-	// if err != nil {
-	// 	innerlog.Logger.Warnc(c.ctx, "Consul registration disabled: invalid business listener port: %v", err)
-	// 	return nil
-	// }
-
 	registration, err := consulutils.NewRegistration(
 		share.GetServiceName(),
 		c.businessListener.Addr().String(),

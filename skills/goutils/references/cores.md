@@ -142,6 +142,14 @@ logging.PanicError(cores.Start(srv))
 
 本地默认注册 `127.0.0.1` 和业务实际监听端口，使用进程实例 ID 区分多次启动；Consul 必须能访问该实例的管理 HTTP。字段说明和 Downward API 配置见仓库 [consulutils/README.md](../../../consulutils/README.md)，可运行的组合示例见 `example/cores-consul`。
 
+## 发现其他服务
+
+通过 `consulutils.Discover(ctx, "orders")` 取得去重、排序后的健康 `host:port`，或通过 `consulutils.Resolve(ctx, "orders")` 随机选择一个地址。只使用服务注册的 `Service.Address` 和端口，不取 Node 地址，不添加 URL scheme，不提前解析 DNS；多个 Pod 注册同一个 Service 域名时会去重。HTTP 客户端自行添加 scheme，gRPC 客户端可使用返回的目标。
+
+默认跨 Kubernetes namespace 查询，不读取 `POD_NAMESPACE`。需要隔离时，显式传入一份 `consulutils.DiscoveryConfig{Namespace: "test"}`，按 `Service.Meta.namespace` 精确筛选；同一份配置还可提供自定义 `Client`，省略时复用公共 Client。每次查询最多 3 秒，并遵守调用方更短的 Context 期限；无缓存、后台 Watch 或无限重试，也不会关闭共享 Client。
+
+无可用地址时用 `errors.Is(err, consulutils.ErrNoAvailableService)` 判断，查询、权限及 Context 错误保留原始原因。Health API 需要 `node:read` 和 `service:read` 权限，参见 [Consul 官方说明](https://developer.hashicorp.com/consul/api-docs/health#list-service-instances-for-service)。完整配置说明见仓库 [consulutils/README.md](../../../consulutils/README.md)，可运行示例见 `example/consul-discovery`。
+
 ## 一次性脚本
 
 ```go

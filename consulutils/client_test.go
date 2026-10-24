@@ -81,6 +81,44 @@ func TestDefaultClientCachesConfigurationError(t *testing.T) {
 	runDefaultClientTest(t, "invalid")
 }
 
+func TestDiscoveryUsesSharedDefaultClient(t *testing.T) {
+	if os.Getenv("GOUTILS_CONSUL_CLIENT_TEST") != "discovery" {
+		runDefaultClientTest(t, "discovery")
+		return
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Header.Get("X-Shared-Client") != "same-instance" || r.Header.Get("X-Consul-Token") != "original-token" {
+			t.Errorf("discovery did not reuse shared client headers: %v", r.Header)
+		}
+		_, _ = w.Write([]byte(`[{"Service":{"Address":"orders.prod.svc","Port":8080}}]`))
+	}))
+	defer server.Close()
+	t.Setenv("CONSUL_HTTP_ADDR", server.URL)
+	t.Setenv("CONSUL_HTTP_TOKEN", "original-token")
+	client, err := DefaultClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.AddHeader("X-Shared-Client", "same-instance")
+	// 初始化之后环境变量变化不能让发现模块另建 client；传空配置与省略配置均复用单例。
+	t.Setenv("CONSUL_HTTP_ADDR", "unsupported://consul")
+	t.Setenv("CONSUL_HTTP_TOKEN", "changed-token")
+	for _, configs := range [][]DiscoveryConfig{nil, {{}}} {
+		addresses, err := Discover(context.Background(), "orders", configs...)
+		if err != nil || len(addresses) != 1 || addresses[0] != "orders.prod.svc:8080" {
+			t.Fatalf("Discover with shared client = %v, %v", addresses, err)
+		}
+	}
+	if address, err := Resolve(context.Background(), "orders"); err != nil || address != "orders.prod.svc:8080" {
+		t.Fatalf("Resolve with shared client = %s, %v", address, err)
+	}
+	if requests.Load() != 3 {
+		t.Fatalf("discovery requests = %d, want 3", requests.Load())
+	}
+}
+
 func runDefaultClientTest(t *testing.T, mode string) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$")

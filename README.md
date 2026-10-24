@@ -34,9 +34,12 @@ flags.Parse(flags.WithRemoteConfig())
 
 集群通过部署注入的 `POD_NAMESPACE`、`POD_NAME`、`POD_IP` 识别，三者必须同时提供：注册 Kubernetes Service 域名，Consul `Name` 仍取 `share` 服务名，实例 ID 固定为 `namespace-podName-businessPort`，不额外添加逻辑服务名前缀。健康检查指向当前 Pod IP 的管理端口。本地默认注册 `127.0.0.1` 和业务端口，实例 ID 规则保持不变；同机运行多个服务时需分别设置管理端口。
 
+调用其他服务时，`consulutils.Discover(ctx, "orders")` 返回去重、排序后的健康 `host:port`，`Resolve` 随机选择一个，均复用公共 Client。默认跨 Kubernetes namespace 查询，不读取 `POD_NAMESPACE`；需要隔离时显式传入 `DiscoveryConfig{Namespace: "test"}`。Health API 需要 `node:read`、`service:read` 权限，详见 [官方说明](https://developer.hashicorp.com/consul/api-docs/health#list-service-instances-for-service)。
+
 - [注册、共享连接与 Kubernetes 部署配置](consulutils/README.md)
 - [配置读取与 Watch](flags/v2/README.md)
 - [Consul 服务示例](example/cores-consul/main.go)
+- [Consul 服务发现示例](example/consul-discovery/main.go)
 
 ## 推荐项目目录架构
 ```

@@ -1,6 +1,6 @@
-# Consul 公共 Client 与服务注册
+# Consul 公共 Client、服务注册与发现
 
-`consulutils` 为配置读取和服务注册提供公共的官方 `*api.Client`。`flags/v2` 的 Consul Provider、配置 Watch 和 `cores.WithConsulRegister` 默认使用同一个 Client 和 HTTP 连接池，不要求业务代码重复创建连接。
+`consulutils` 为配置读取、服务注册和发现提供公共的官方 `*api.Client`。`flags/v2` 的 Consul Provider、配置 Watch、`cores.WithConsulRegister` 和服务发现默认使用同一个 Client 和 HTTP 连接池，不要求业务代码重复创建连接。
 
 ## 连接配置
 
@@ -13,7 +13,7 @@ if err != nil {
 
 Client 首次使用时读取官方 SDK 的默认配置和 `CONSUL_HTTP_ADDR`、`CONSUL_HTTP_TOKEN` 等环境变量，默认地址为 `127.0.0.1:8500`。环境配置应在进程启动前完成，运行期间修改环境变量不会替换已有公共 Client。TLS、数据中心和认证等配置遵循 [Consul Go SDK](https://pkg.go.dev/github.com/hashicorp/consul/api#Config)。
 
-需要自定义连接时，在组合根创建一个官方 Client，同时传给 `flags.WithRemoteConsulProvider(client)` 和 `RegistrationConfig.Client`，详见 [flags/v2 示例](../flags/v2/README.md)。停止配置 Watch 不会注销服务，注销服务也不会关闭配置 Watch。
+需要自定义连接时，在组合根创建一个官方 Client，同时传给 `flags.WithRemoteConsulProvider(client)`、`RegistrationConfig.Client` 和 `DiscoveryConfig.Client`，详见 [flags/v2 示例](../flags/v2/README.md)。停止配置 Watch 不会注销服务，注销服务也不会关闭配置 Watch；服务发现不关闭共享 Client。
 
 **服务注册必须使用稳定的同一个 Consul Agent 地址。** `Agent().ServiceRegister()`、查询已注册实例和注销请求操作具体 Agent，普通负载均衡地址可能让这些请求落到不同 Agent；仅复用同一个 Client 不能解决这种问题。配置 KV 读取和服务注册共用该稳定地址，ACL Token 需要相应 KV 读取权限以及注册服务的 `service:read`、`service:write` 权限。参见 [Consul Agent Service API](https://developer.hashicorp.com/consul/api-docs/agent/service)。
 
@@ -106,7 +106,50 @@ livenessProbe:
 
 集群 Consul `Name` 仍使用 `share.GetServiceName()`，实例 ID 固定为 `namespace-podName-businessPort`，不额外添加逻辑服务名前缀。不同 Pod 名区分不同实例；同一 namespace 下同名 Pod 以相同业务端口重建时会复用该 ID。本地实例 ID 规则保持不变。
 
-同一个 Consul 中不同 namespace 的同名服务仍属于同一个逻辑服务名。发现端需要按 `namespace` 元数据或应用约定的环境标签筛选；唯一实例 ID 只解决记录覆盖问题，不自动隔离环境。通过 Consul 得到域名后，调用方仍需要能解析并访问该集群域名。
+同一个 Consul 中不同 namespace 的同名服务仍属于同一个逻辑服务名。服务发现默认跨 namespace 查询，需要隔离时显式传入 `DiscoveryConfig.Namespace`；唯一实例 ID 不自动隔离环境。通过 Consul 得到域名后，调用方仍需要能解析并访问该集群域名。
+
+## 按服务名发现健康地址
+
+```go
+addresses, err := consulutils.Discover(ctx, "orders")
+if err != nil {
+    return err
+}
+// addresses 是已去重、排序的 host:port，例如 orders.test.svc.cluster.local:8080。
+
+address, err := consulutils.Resolve(ctx, "orders")
+if err != nil {
+    return err
+}
+// address 是从健康地址中随机选择的一个，可交给 HTTP 或 gRPC 客户端。
+```
+
+`Discover` 查询 Consul Health API，只返回健康服务的 `Service.Address` 和 `Service.Port`，不回退到 Node 地址；空地址或非法端口会被忽略。结果按 `host:port` 去重并排序，支持 `[IPv6]:port`；集群中多个 Pod 注册同一个 Service 域名时只返回一份地址。`Resolve` 重新查询并从这些去重后的地址中随机选择一个。函数返回注册地址，不补域名、不添加 URL scheme，也不提前做 DNS 解析；HTTP 调用方自行添加 `http://` 或 `https://`。
+
+返回结果是当前查询快照，已创建的 HTTP/gRPC 客户端连接不会自动更新；调用方应复用客户端或连接，避免每次 RPC 都重新 Dial，需要刷新目标时自行安排查询和连接更新。
+
+**默认不限 Kubernetes namespace，也不读取 `POD_NAMESPACE`。** `DiscoveryConfig.Namespace` 非空时，才对注册的 `Service.Meta.namespace` 做精确匹配；这里指应用注册元数据，不是 Consul Enterprise Namespace。最多传入一份可选配置，自定义 Client 和 namespace 可在同一份配置中提供：
+
+```go
+addresses, err := consulutils.Discover(ctx, "orders", consulutils.DiscoveryConfig{
+    Namespace: "test",
+    Client:    client, // 可省略，默认使用公共 Client。
+})
+```
+
+每次查询最多等待 3 秒，调用方 Context 的更短期限优先生效。不缓存结果、不启动后台 Watch，也不无限重试。无可用地址时返回 `ErrNoAvailableService`，可通过 `errors.Is(err, consulutils.ErrNoAvailableService)` 判断；空结果的响应若带有 ACL 过滤标记，错误提示也会指出 ACL 过滤。查询、权限和 Context 错误保留原始原因，不统一改成“没有服务”。
+
+Health API 查询需要 ACL 的 `node:read` 和 `service:read` 权限，结果也受 ACL 可见范围限制。参见 [Consul Health Service API](https://developer.hashicorp.com/consul/api-docs/health#list-service-instances-for-service)。
+
+可运行的最小示例仅查询并输出 HTTP/gRPC 目标，不发送业务请求：
+
+```sh
+# 默认查询当前 Consul 中 orders 的健康地址，不限 Kubernetes namespace
+go run ./example/consul-discovery -target=orders
+
+# 只查注册元数据 namespace=test 的地址
+go run ./example/consul-discovery -target=orders -namespace=test
+```
 
 ## 本地开发与示例
 

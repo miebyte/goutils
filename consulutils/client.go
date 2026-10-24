@@ -1,4 +1,4 @@
-// Package consulutils 提供配置读取和服务注册共用的 Consul 能力。
+// Package consulutils 提供配置读取、服务注册和服务发现共用的 Consul 能力。
 package consulutils
 
 import (
@@ -20,7 +20,7 @@ var defaultClient = sync.OnceValues(func() (*consulapi.Client, error) {
 
 // DefaultClient 返回进程内共享的 Consul client，首次调用前应准备好环境变量。
 // 创建 client 不连接 Consul；请求超时由调用方的 context 控制，避免截断 KV 长轮询。
-// 配置监听和服务注册只管理各自任务，不能关闭共享 client 的连接池。
+// 配置监听、服务注册和服务发现只管理各自任务，不能关闭共享 client 的连接池。
 func DefaultClient() (*consulapi.Client, error) {
 	return defaultClient()
 }

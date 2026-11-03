@@ -110,6 +110,8 @@ livenessProbe:
 
 ## 按服务名发现健康地址
 
+业务调用推荐使用统一的 [discover 包](../discover/README.md)，默认委托本节的 Consul 发现，也支持本地 JSON 服务目录。以下 `consulutils` API 保留为 Consul 专用入口，不受 `discover.Configure` 影响。
+
 ```go
 addresses, err := consulutils.Discover(ctx, "orders")
 if err != nil {
@@ -149,6 +151,9 @@ go run ./example/consul-discovery -target=orders
 
 # 只查注册元数据 namespace=test 的地址
 go run ./example/consul-discovery -target=orders -namespace=test
+
+# 本地调试使用 discover 的 JSON 服务目录，无需启动 Consul
+go run ./example/consul-discovery -services=example/consul-discovery/services.json
 ```
 
 ## 本地开发与示例

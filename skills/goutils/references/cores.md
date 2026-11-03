@@ -144,11 +144,15 @@ logging.PanicError(cores.Start(srv))
 
 ## 发现其他服务
 
-通过 `consulutils.Discover(ctx, "orders")` 取得去重、排序后的健康 `host:port`，或通过 `consulutils.Resolve(ctx, "orders")` 随机选择一个地址。只使用服务注册的 `Service.Address` 和端口，不取 Node 地址，不添加 URL scheme，不提前解析 DNS；多个 Pod 注册同一个 Service 域名时会去重。HTTP 客户端自行添加 scheme，gRPC 客户端可使用返回的目标。
+统一通过 `discover.Discover(ctx, "orders")` 取得去重、排序后的 `host:port`，或通过 `discover.Resolve(ctx, "orders")` 随机选择一个地址。返回值不添加 URL scheme、不提前解析 DNS；HTTP 客户端自行添加 scheme，gRPC 客户端可使用返回的目标。
 
-默认跨 Kubernetes namespace 查询，不读取 `POD_NAMESPACE`。需要隔离时，显式传入一份 `consulutils.DiscoveryConfig{Namespace: "test"}`，按 `Service.Meta.namespace` 精确筛选；同一份配置还可提供自定义 `Client`，省略时复用公共 Client。每次查询最多 3 秒，并遵守调用方更短的 Context 期限；无缓存、后台 Watch 或无限重试，也不会关闭共享 Client。
+默认委托 Consul，只使用健康实例注册的 `Service.Address` 和端口，不取 Node 地址；多个 Pod 注册同一个 Service 域名时会去重。默认跨 Kubernetes namespace 查询，不读取 `POD_NAMESPACE`。需要隔离时，在组合根调用 `discover.Configure(discover.Config{Namespace: "test"})`，按 `Service.Meta.namespace` 精确筛选；同一配置还可提供自定义 `Client`，省略时复用公共 Client。每次查询最多 3 秒，并遵守调用方更短的 Context 期限；无查询缓存、后台 Watch 或无限重试，也不会关闭共享 Client。
 
-无可用地址时用 `errors.Is(err, consulutils.ErrNoAvailableService)` 判断，查询、权限及 Context 错误保留原始原因。Health API 需要 `node:read` 和 `service:read` 权限，参见 [Consul 官方说明](https://developer.hashicorp.com/consul/api-docs/health#list-service-instances-for-service)。完整配置说明见仓库 [consulutils/README.md](../../../consulutils/README.md)，可运行示例见 `example/consul-discovery`。
+本地调试在启动阶段调用 `discover.Configure(discover.Config{LocalFile: "services.json"})`，目录格式为 `{"orders": ["127.0.0.1:8080"], "service1": []}`。指定目录后只使用本地数据，缺失服务或空数组时报错，不回退 Consul，也不检查地址连通性。文件在配置时加载为快照，修改后需重新配置或重启。`LocalFile` 不能与 `Namespace` 或 `Client` 同时设置。需要独立数据源时使用 `discover.New(config)`，再调用实例的 `Discover`、`Resolve`。
+
+`Resolver` 依赖 `discover.Discoverer` 接口，其方法为 `Discover(context.Context, string) ([]string, error)`。通过 `Config{Source: source}` 注入自定义数据源；`Source` 不能与 `LocalFile`、`Namespace` 或 `Client` 混用。内置 `discover.Consul` 和 `discover.NewLocal(path)` 返回的 `*discover.Local` 均实现该接口。自定义实现需支持并发调用、传递 Context 并保留底层错误；结果复制、排序去重及空结果错误由 `Resolver` 统一处理。
+
+无可用地址时用 `errors.Is(err, discover.ErrNoAvailableService)` 判断，该错误与 `consulutils.ErrNoAvailableService` 相同；查询、权限及 Context 错误保留原始原因。原有 `consulutils` 发现 API 仍只使用 Consul，不受统一入口配置影响。Consul Health API 需要 `node:read` 和 `service:read` 权限，参见 [Consul 官方说明](https://developer.hashicorp.com/consul/api-docs/health#list-service-instances-for-service)。完整配置说明见仓库 [discover/README.md](../../../discover/README.md)，可运行示例见 `example/consul-discovery`。
 
 ## 一次性脚本
 

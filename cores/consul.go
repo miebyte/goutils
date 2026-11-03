@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/miebyte/goutils/consulutils"
+	"github.com/miebyte/goutils/discover"
 	"github.com/miebyte/goutils/internal/innerlog"
 	"github.com/miebyte/goutils/share"
 )
@@ -12,6 +13,7 @@ import (
 // WithConsulRegister 显式启用 Consul 注册，仅在 Start 的服务模式下生效。
 // 服务名来自进程配置，业务端口和健康检查端口分别从已绑定的 listener 获取。
 // 注册配置或网络请求失败只记录日志，不影响业务服务的运行。
+// 未设置服务发现数据源时，默认使用相同 Client 的 Consul 服务发现。
 func WithConsulRegister(configs ...consulutils.RegistrationConfig) ServiceOption {
 	return func(cs *CoresService) {
 		if len(configs) > 1 {
@@ -25,6 +27,7 @@ func WithConsulRegister(configs ...consulutils.RegistrationConfig) ServiceOption
 			config = configs[0]
 		}
 		cs.consulConfig = &config
+		discover.SetDefaultResolverIfUnset(discover.NewConsulDiscovery(config.Client))
 	}
 }
 

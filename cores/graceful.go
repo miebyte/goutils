@@ -49,8 +49,12 @@ func (c *CoresService) gracefulKill() mountFn {
 
 func (c *CoresService) shutdownServers() error {
 	c.stopping.Store(true)
-	ctx, cancel := context.WithTimeout(context.Background(), defaultMaxWait)
-	defer cancel()
+	ctx := context.Background()
+	if !c.waitAllDone {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultMaxWait)
+		defer cancel()
+	}
 
 	var grp errgroup.Group
 	for _, srv := range []*httpServer{c.internalHTTP, c.httpServer} {

@@ -91,7 +91,7 @@ logging.PanicError(cores.Start(srv))
 - Unary/Stream interceptor、keepalive 等通过 `grpc.NewServer(...)` 的原生选项配置，`cores` 不另加一层配置。只提供 gRPC 时，仍可使用原生 gRPC TLS 配置。
 - 同时提供 HTTP 时，增加 `WithHttpHandler(cores.HttpHandler{ApiPrefix: "/api", Handler: handler})`。cmux 在统一业务端口上按连接识别协议；当前共享模式使用明文 HTTP/gRPC，TLS 应在入口代理终止。管理 HTTP 默认独立监听 `:6060`。
 - 任一端口绑定失败都会返回错误，并回收本次已创建的 Listener；HTTP、gRPC 或 Worker 发生运行错误时会触发统一退出，将错误返回给 `Start`。服务模式下，短 Worker 正常结束不会使进程退出。
-- 收到退出信号或运行错误后，HTTP 和 gRPC 并行关闭，完成后再取消并等待 Worker。gRPC 先调用 `GracefulStop` 等待在途 RPC 完成，超过默认 5 秒后调用 `Stop` 强制关闭并返回包含 `context.DeadlineExceeded` 的错误；使用 `WithDefaultMaxWait` 调整该期限。长时间运行的流式 RPC 也受此期限约束。
+- 收到退出信号或运行错误后，HTTP 和 gRPC 停止接收新请求并并行等待在途请求完成，之后再取消并等待 Worker。默认最多等待 5 秒，超时后 HTTP 调用 `Close`、gRPC 调用 `Stop` 强制关闭，并返回包含 `context.DeadlineExceeded` 的错误；使用 `WithDefaultMaxWait` 调整该期限。启用 `WithWaitAllDone()` 时不设置停机期限，普通 HTTP、SSE 和流式 RPC 均等待自然结束或客户端断开。
 - 停机期限约束 `cores` 的等待时间；RPC handler 应响应自身 Context 的取消，忽略取消的 handler 可能在 `cores` 返回后继续运行。
 - 混合协议模式不额外跟踪连接；仍处于 cmux 协议识别阶段的连接由 `HttpServerConfig.ReadHeaderTimeout` 限制，默认 5 秒，退出时可能额外等待该识别超时。
 - gRPC health service、reflection 按业务需要自行注册；它们与管理 HTTP 的健康接口独立。
@@ -190,7 +190,7 @@ func Run(ctx context.Context) error {
 - 使用 `WithWorker(fn)` 自动取函数名，或 `WithNameWorker(name, fn)` 指定稳定名称。
 - Worker 返回非 `context.Canceled` 错误会终止整个服务组。
 - 默认优雅等待时间为 5 秒；可用单个 Worker 的 `maxWait` 参数或 `WithDefaultMaxWait` 调整。
-- `WithWaitAllDone()` 会无限等待所有 Worker 自行退出；只在能保证 Worker 响应取消时使用。
+- `WithWaitAllDone()` 会等待 HTTP/gRPC 排空，再无限等待所有 Worker 自行退出；请求应能结束，Worker 应响应取消。它不移除请求自身的超时，也不忽略客户端断开。
 
 ## 约束
 

@@ -100,6 +100,7 @@ func WithDefaultMaxWait(wait time.Duration) ServiceOption {
 	}
 }
 
+// WithWaitAllDone 等待在途 HTTP 请求、gRPC 调用及 Worker 完成，不受默认停机期限限制。
 func WithWaitAllDone() ServiceOption {
 	return func(cs *CoresService) {
 		cs.waitAllDone = true

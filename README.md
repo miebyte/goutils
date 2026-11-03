@@ -19,6 +19,8 @@ flags.Parse(flags.WithRemoteConfig())
 
 `cores.Run(srv)` 用于一次性脚本，只运行 Worker，全部完成后退出，不启动管理 HTTP，也不执行 Consul 注册。业务 HTTP、gRPC 必须使用服务模式。迁移已有代码时，将 `Start(srv, addr)` 改为构造选项加 `Start(srv)`，将原来通过 `Run` 启动的长期服务改为 `Start`。
 
+服务退出时会停止接收新请求，默认最多等待在途 HTTP/gRPC 请求 5 秒。启用 `cores.WithWaitAllDone()` 后，会等待全部在途请求（包括 SSE）完成或客户端断开，再取消并等待 Worker，不受默认停机期限限制；请求自身的超时和取消仍然有效。
+
 - [HTTP 与 Worker 示例](example/cores/main.go)
 - [gRPC 示例](example/cores-grpc/main.go)
 - [一次性脚本示例](example/cores-script/main.go)

@@ -10,6 +10,9 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+
+	"github.com/miebyte/goutils/flags/v2"
+	"github.com/miebyte/goutils/snail"
 )
 
 var (
@@ -18,6 +21,19 @@ var (
 	// ErrNoDataSource 表示没有可用的数据源。
 	ErrNoDataSource = errors.New("no data source")
 )
+
+var (
+	useLocalDiscovery = flags.Bool("use-local-discovery", false, "use local discovery")
+)
+
+func init() {
+	snail.RegisterObject("localDiscoverySet", func() error {
+		if useLocalDiscovery() {
+			UseLocalSource()
+		}
+		return nil
+	})
+}
 
 // Discoverer 按服务名查询 host:port 地址。实现应支持并发调用，并遵守 ctx 的取消和期限。
 // 没有可用地址时应返回 ErrNoAvailableService；查询失败应保留原始错误。

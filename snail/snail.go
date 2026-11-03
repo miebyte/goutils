@@ -8,7 +8,11 @@
 
 package snail
 
-import "github.com/miebyte/goutils/internal/innerlog"
+import (
+	"fmt"
+
+	"github.com/miebyte/goutils/internal/innerlog"
+)
 
 type slowerObject struct {
 	name string
@@ -29,7 +33,7 @@ func RegisterObject(name string, fn func() error) {
 func Init() {
 	for _, obj := range objs {
 		if err := obj.fn(); err != nil {
-			innerlog.Logger.PanicError(err, "slow init %s failed", obj.name)
+			innerlog.Logger.PanicError(err, fmt.Sprintf("slow init %s failed", obj.name))
 		}
 
 		innerlog.Logger.Debugf("slow init %s success", obj.name)

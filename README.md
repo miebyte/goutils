@@ -40,12 +40,13 @@ flags.Parse(flags.WithRemoteConfig())
 
 ## 服务发现
 
-调用其他服务统一使用 `discover.Discover(ctx, "orders")`，返回去重、排序后的 `host:port`；`discover.Resolve(ctx, "orders")` 随机选择一个。默认查询 Consul 健康实例并复用公共 Client；需要隔离 Kubernetes namespace 时，在启动阶段调用 `discover.Configure(discover.Config{Namespace: "test"})`。
+调用其他服务统一使用 `discover.Discover(ctx, "orders")`，返回去重、排序后的 `host:port`；`discover.Resolve(ctx, "orders")` 随机选择一个。导入 `discover` 后，`flags.Parse()` 会在依赖它的业务 `snail` 回调前自动初始化数据源，默认查询 Consul 健康实例并复用公共 Client。
 
-本地调试在 `main` 启动阶段调用 `discover.Configure(discover.Config{LocalFile: "services.json"})`，检查错误后再启动业务服务。JSON 服务目录例如 `{"orders": ["127.0.0.1:8080"], "service1": []}`。本地模式只使用目录，缺失服务或空数组返回 `discover.ErrNoAvailableService`，不依赖 Consul。文件在配置时加载为快照，修改后重新配置或重启进程。
+本地调试添加启动参数 `--use-local-discovery=true`，读取当前工作目录的 `./services.json`，例如 `{"orders": ["127.0.0.1:8080"], "service1": []}`。本地模式只使用目录，缺失服务或空数组返回 `discover.ErrNoAvailableService`。文件在初始化时加载为快照，修改后重启或再次调用 `discover.UseLocalSource()`。
 
-- [服务发现配置与独立实例](discover/README.md)
-- [可运行的本地目录与 Consul 发现示例](example/consul-discovery/main.go)
+`discover.SetDefaultResolver(source)` 可显式安装数据源，自动初始化不会覆盖它。自定义 Consul Client 时，在 `flags.Parse` 前调用 `discover.SetDefaultResolver(discover.NewConsulDiscovery(client))`，并按需将同一个 Client 传给注册配置。`cores.WithConsulRegister()` 只负责注册；未使用 `flags.Parse` 的程序需手动安装发现数据源后再查询。
+
+- [初始化顺序、本地目录与数据源接口](discover/README.md)
 
 ## 推荐项目目录架构
 ```

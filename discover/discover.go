@@ -27,10 +27,20 @@ var (
 )
 
 func init() {
-	snail.RegisterObject("localDiscoverySet", func() error {
-		if useLocalDiscovery() {
-			UseLocalSource()
+	// 消费方依赖本包，因此本回调先于其业务初始化回调注册。
+	snail.RegisterObject("discoverySet", func() error {
+		if currentResolver() != nil {
+			return nil
 		}
+		var resolver Discoverer = NewConsulDiscovery(nil)
+		if useLocalDiscovery() {
+			local, err := NewLocal("./services.json")
+			if err != nil {
+				return err
+			}
+			resolver = local
+		}
+		SetDefaultResolverIfUnset(resolver)
 		return nil
 	})
 }
@@ -69,7 +79,8 @@ func SetDefaultResolverIfUnset(resolver Discoverer) bool {
 	return defaultResolver.CompareAndSwap(nil, &resolver)
 }
 
-// Discover 返回排序、去重后的 host:port。未配置时默认查询 Consul。
+// Discover 返回排序、去重后的 host:port。
+// 调用前应完成 flags.Parse，或通过 SetDefaultResolver 显式设置数据源。
 func Discover(ctx context.Context, serviceName string) ([]string, error) {
 	addresses, err := currentResolver().Discover(ctx, serviceName)
 	if err != nil {

@@ -4,7 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,40 +15,30 @@ import (
 	"github.com/miebyte/goutils/discover"
 )
 
-type fixedDiscoverySource struct {
-	address string
-}
-
-func (s fixedDiscoverySource) Discover(ctx context.Context, _ string) ([]string, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return []string{s.address}, nil
-}
-
 func resetDefaultDiscovery(t *testing.T) {
 	t.Helper()
 	discover.SetDefaultResolver(nil)
 	t.Cleanup(func() { discover.SetDefaultResolver(nil) })
 }
 
-func TestConsulRegisterInitializesDiscoveryWithConfiguredClient(t *testing.T) {
-	resetDefaultDiscovery(t)
-	var fallbackRequests atomic.Int32
-	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fallbackRequests.Add(1)
-		_ = json.NewEncoder(w).Encode([]*consulapi.ServiceEntry{{
-			Service: &consulapi.AgentService{Address: "default.invalid", Port: 9999},
-		}})
-	}))
-	t.Cleanup(fallback.Close)
-	t.Setenv("CONSUL_HTTP_ADDR", fallback.URL)
-	t.Setenv("CONSUL_HTTP_TOKEN", "")
-	t.Setenv("CONSUL_NAMESPACE", "")
+func assertDefaultDiscoveryAddress(t *testing.T, want string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	address, err := discover.Resolve(ctx, "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if address != want {
+		t.Fatalf("discovery = %q, want %q", address, want)
+	}
+}
 
-	var requests atomic.Int32
+func TestConsulRegisterPreservesDiscoveryConfiguredBeforeConstruction(t *testing.T) {
+	resetDefaultDiscovery(t)
+	var discoveryRequests atomic.Int32
 	client := testConsulClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
+		discoveryRequests.Add(1)
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/health/service/orders" || r.URL.Query().Get("passing") != "1" {
 			t.Errorf("unexpected discovery request: %s %s", r.Method, r.URL)
 		}
@@ -55,49 +46,35 @@ func TestConsulRegisterInitializesDiscoveryWithConfiguredClient(t *testing.T) {
 			Service: &consulapi.AgentService{Address: "127.0.0.1", Port: 8080},
 		}})
 	}))
-	service := NewCores(WithConsulRegister(consulutils.RegistrationConfig{Client: client}))
-	t.Cleanup(service.cancel)
-	if requests.Load() != 0 || fallbackRequests.Load() != 0 {
-		t.Fatal("constructing a service contacted Consul")
-	}
+	discover.SetDefaultResolver(discover.NewConsulDiscovery(client))
+	assertDefaultDiscoveryAddress(t, "127.0.0.1:8080")
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	address, err := discover.Resolve(ctx, "orders")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if address != "127.0.0.1:8080" || requests.Load() != 1 || fallbackRequests.Load() != 0 {
-		t.Fatalf("discovery = %q, configured requests = %d, default requests = %d; want configured Consul only", address, requests.Load(), fallbackRequests.Load())
-	}
-}
-
-func TestConsulRegisterPreservesExplicitDiscoverySource(t *testing.T) {
-	resetDefaultDiscovery(t)
-	discover.SetDefaultResolver(fixedDiscoverySource{address: "local:8080"})
-	var requests atomic.Int32
-	client := testConsulClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		_ = json.NewEncoder(w).Encode([]*consulapi.ServiceEntry{{
-			Service: &consulapi.AgentService{Address: "consul", Port: 9090},
-		}})
+	var registrationRequests atomic.Int32
+	registrationClient := testConsulClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		registrationRequests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
-	service := NewCores(WithConsulRegister(consulutils.RegistrationConfig{Client: client}))
+	service := NewCores(WithConsulRegister(consulutils.RegistrationConfig{Client: registrationClient}))
 	t.Cleanup(service.cancel)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	address, err := discover.Resolve(ctx, "orders")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if address != "local:8080" || requests.Load() != 0 {
-		t.Fatalf("discovery = %q, Consul requests = %d; want the explicitly configured source", address, requests.Load())
+	assertDefaultDiscoveryAddress(t, "127.0.0.1:8080")
+	if discoveryRequests.Load() != 2 || registrationRequests.Load() != 0 {
+		t.Fatalf("discovery requests = %d, registration requests = %d; want the original discovery Client before and after construction", discoveryRequests.Load(), registrationRequests.Load())
 	}
 }
 
-func TestConsulDiscoveryDefaultCanBeOverriddenAfterConstruction(t *testing.T) {
+func TestConsulRegisterPreservesLocalDiscovery(t *testing.T) {
 	resetDefaultDiscovery(t)
+	path := filepath.Join(t.TempDir(), "services.json")
+	if err := os.WriteFile(path, []byte(`{"orders":["127.0.0.1:8080"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	local, err := discover.NewLocal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discover.SetDefaultResolver(local)
+	assertDefaultDiscoveryAddress(t, "127.0.0.1:8080")
+
 	var requests atomic.Int32
 	client := testConsulClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -105,13 +82,24 @@ func TestConsulDiscoveryDefaultCanBeOverriddenAfterConstruction(t *testing.T) {
 	}))
 	service := NewCores(WithConsulRegister(consulutils.RegistrationConfig{Client: client}))
 	t.Cleanup(service.cancel)
-	discover.SetDefaultResolver(fixedDiscoverySource{address: "override:8080"})
+	assertDefaultDiscoveryAddress(t, "127.0.0.1:8080")
+	if requests.Load() != 0 {
+		t.Fatalf("Consul requests = %d, want the local source before and after construction", requests.Load())
+	}
+}
 
-	address, err := discover.Resolve(context.Background(), "orders")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if address != "override:8080" || requests.Load() != 0 {
-		t.Fatalf("discovery = %q, Consul requests = %d; want the later explicit source", address, requests.Load())
-	}
+func TestConsulRegisterDoesNotInitializeDiscovery(t *testing.T) {
+	resetDefaultDiscovery(t)
+	client := testConsulClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	service := NewCores(WithConsulRegister(consulutils.RegistrationConfig{Client: client}))
+	t.Cleanup(service.cancel)
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("constructing a service initialized discovery without flags.Parse or an explicit source")
+		}
+	}()
+	_, _ = discover.Resolve(context.Background(), "orders")
 }

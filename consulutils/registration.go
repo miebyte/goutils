@@ -150,7 +150,7 @@ func NewRegistration(serviceName string, businessAddress string, managementAddre
 	}
 
 	// 验证服务地址是否合法
-	if err := ValidateRegistrationHost(address); err != nil {
+	if err := validateRegistrationHost(address); err != nil {
 		return nil, fmt.Errorf("invalid consul service address: %w", err)
 	}
 
@@ -294,7 +294,7 @@ func (r *Registration) Deregister(ctx context.Context) error {
 	return r.client.Agent().ServiceDeregisterOpts(r.service.ID, (&api.QueryOptions{}).WithContext(requestCtx))
 }
 
-func ValidateRegistrationHost(host string) error {
+func validateRegistrationHost(host string) error {
 	if host == "" || strings.ContainsAny(host, "/?# \t\r\n") || (strings.Contains(host, ":") && net.ParseIP(host) == nil) {
 		return errors.New("expected a host name or IP without scheme or port")
 	}

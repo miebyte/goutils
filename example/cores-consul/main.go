@@ -53,6 +53,7 @@ func main() {
 	}
 	if registerEnabled() {
 		// 注册身份由框架统一取得：服务名读取 share，端口使用业务实际监听端口。
+		// 此选项只负责注册；需要服务发现时，导入 discover 后由 flags.Parse 独立初始化。
 		opts = append(opts, cores.WithConsulRegister())
 	}
 
